@@ -1,101 +1,412 @@
+<div align="center">
+
+<img src="docs/icon.png" alt="OmniClip" width="96" height="96">
+
 # OmniClip
 
-One clipboard for every device on your Wi-Fi. Copy on your MacBook and paste on your iPhone. Share a photo from Android and paste it on Windows. Drop a file on the Mac and pick it up on the iPad.
+**One clipboard for every device on your Wi-Fi.**
+
+Copy on your MacBook and paste on your iPhone. Share a photo from Android and paste it on Windows.
+Drop a file on the Mac and pick it up on the iPad. No cloud, no account, no app store.
+
+![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20iOS%20%7C%20iPadOS%20%7C%20Android-4f46e5)
+![Node](https://img.shields.io/badge/node-%E2%89%A522.12-339933?logo=node.js&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178c6?logo=typescript&logoColor=white)
+![Electron](https://img.shields.io/badge/Electron-45-47848f?logo=electron&logoColor=white)
+![Local only](https://img.shields.io/badge/data-stays%20on%20your%20LAN-16a34a)
+![Status](https://img.shields.io/badge/status-v0.1%20preview-orange)
+
+<img src="docs/demo.gif" alt="OmniClip demo: text and an image copied on one device appear instantly on two phones" width="720">
+
+<sub>Text from a MacBook, a note typed on an iPhone, and a photo all appear on every paired device in real time. <a href="docs/demo.mp4">Watch as MP4</a></sub>
+
+</div>
+
+---
+
+## Contents
+
+- [Why OmniClip](#why-omniclip)
+- [Features](#features)
+- [Supported devices](#supported-devices)
+- [Quick start](#quick-start)
+- [Everyday use](#everyday-use)
+- [How it works](#how-it-works)
+- [Security and privacy](#security-and-privacy)
+- [HTTP API](#http-api)
+- [Configuration and storage](#configuration-and-storage)
+- [Development](#development)
+- [Building installers](#building-installers)
+- [Troubleshooting](#troubleshooting)
+- [Known limitations](#known-limitations)
+- [Roadmap](#roadmap)
+- [Contributing](#contributing)
+
+## Why OmniClip
+
+Apple's Universal Clipboard only works between Apple devices. Windows' clipboard sync only works with a Microsoft account and Android. Cloud clipboard apps send everything you copy, including passwords and private messages, to someone else's server.
+
+OmniClip connects **all** of your devices instead, and keeps your data **at home**. One of your computers acts as a small local server (the *hub*). Every other device talks to it directly over your Wi-Fi. Nothing ever leaves your network.
+
+## Features
+
+| | |
+| --- | --- |
+| 🔄 **Automatic desktop sync** | On Mac and Windows, copy as usual and paste on the other computer. No buttons. |
+| 📱 **Phones and tablets without an app store** | iPhone, iPad and Android join through an installable web app (PWA). |
+| 🖼️ **Text, links, images and files** | Images go straight onto the desktop clipboard. Files are saved to `Downloads/OmniClip`. |
+| 🕘 **History** | Your last 200 clips. Click any of them to copy it again. |
+| 📤 **Share sheet integration** | Android: **Share → OmniClip** from any app. iOS: a one-tap Shortcut, including Back Tap. |
+| 🧭 **Zero configuration** | Computers find each other automatically over mDNS (Bonjour). |
+| 🛟 **Automatic failover** | If the hub computer shuts down, another desktop takes over within about 10 seconds. |
+| 🔐 **Private by design** | Pairing codes, a token per device, TLS encryption, and per-device revocation. |
+
+## Supported devices
 
 | Device | How it joins | Sending | Receiving |
 | --- | --- | --- | --- |
-| Mac / Windows | Desktop tray app | Automatic: just copy | Automatic: just paste |
-| Android | Web app (installable) | **Paste & Send**, or **Share → OmniClip** from any app | Tap **Copy** |
-| iPhone / iPad | Web app (Add to Home Screen) | **Paste & Send**, or a one-tap Shortcut | Tap **Copy** |
+| **Mac** (macOS 12+) | Menu-bar app | Automatic: just copy | Automatic: just paste |
+| **Windows** 10/11 | System-tray app | Automatic: just copy | Automatic: just paste |
+| **Android** | Web app (installable) | **Paste & Send**, or **Share → OmniClip** | Tap **Copy** |
+| **iPhone / iPad** | Web app (Add to Home Screen) | **Paste & Send**, or a one-tap Shortcut | Tap **Copy** |
+| Anything with a browser | Web app | Paste into the text box | Tap **Copy** |
 
-Everything stays on your local network. There is no cloud and no account.
+> [!NOTE]
+> All devices must be on the **same Wi-Fi or LAN**. Guest networks that isolate clients from each other block local connections.
 
-## How it works
+## Quick start
 
-```
- ┌──────────── Desktop app (Electron, Mac/Win) ────────────┐
- │  Tray menu · clipboard watcher                           │
- │  Embedded hub (on one desktop, chosen automatically):     │
- │    HTTPS + WebSocket server · history · file store        │
- │    advertised on the LAN with mDNS · serves the web app   │
- └──────────────────────────────────────────────────────────┘
-        ▲ wss (found via mDNS)          ▲ https (paired via QR)
- Other Mac/Windows desktops      iPhone / iPad / Android (PWA)
-```
+### 1. Install the desktop app
 
-- **Hub election.** Every desktop runs the same app. On launch it looks for an OmniClip hub on the LAN. If it finds one, it joins. If not, it becomes the hub.
-- **Failover.** The hub shares its device list and certificate authority with the other paired desktops. If the hub computer goes away for more than 10 seconds, another desktop takes over. Desktops reconnect automatically.
-- **Security.** Devices pair with a one-time 6-digit code. Each device gets its own token, and you can remove a device from the tray menu. Traffic is encrypted with TLS using a private certificate authority that the hub generates.
-- **Why phones need a certificate.** Browsers only allow clipboard access and app install over HTTPS. You install OmniClip's certificate once per phone. If you can't, there is a **basic mode** over plain HTTP: copying still works, and to send you paste into a text box.
-- **iOS limits.** iOS never lets apps read the clipboard in the background, so sending from an iPhone or iPad always takes one tap. That's an Apple restriction, not an OmniClip one.
+Install OmniClip on at least one Mac or Windows PC (see [Building installers](#building-installers)), then launch it. A clipboard icon appears in the menu bar (Mac) or system tray (Windows).
 
-## Using it
+The first computer you start becomes the **hub** automatically.
 
-1. **Install the desktop app** on your Mac and/or Windows PC (see *Build* below) and launch it. A clipboard icon appears in the menu bar or system tray.
-2. **Pair a phone.** In the tray menu, choose **Pair a phone or tablet…** and scan the QR code with the phone's camera. The setup page walks you through it:
-   - Download and trust the certificate (one time).
-   - Open the secure app and tap **Pair**.
-   - Add it to the Home Screen (iOS: Share → Add to Home Screen; Android: ⋮ → Install app).
-3. **Add another computer.** Launch OmniClip on it. It finds the hub and shows a notification. Choose **Join …** in its tray menu and enter the code from the hub's pairing window.
+### 2. Pair a phone or tablet
+
+1. In the tray menu, choose **Pair a phone or tablet…**. A window shows a QR code and a 6-digit code.
+2. Scan the QR code with the phone's camera. A setup page opens.
+3. Follow the setup page. You only do this once per phone:
+   - **Install the OmniClip certificate.** Browsers only allow clipboard access over HTTPS, and this certificate lets your phone trust your hub.
+     - *iPhone/iPad:* download the profile, install it in **Settings → Profile Downloaded**, then turn it on in **Settings → General → About → Certificate Trust Settings**.
+     - *Android:* download the certificate and install it in **Settings → Security & privacy → More security settings → Install from device storage → CA certificate**. The wording varies by phone, so searching Settings for "certificate" helps.
+   - Open the secure app and tap **Pair this device**.
+   - Add it to your Home Screen. *iOS:* Share → **Add to Home Screen**. *Android:* ⋮ → **Install app**.
+
+> [!TIP]
+> Can't install the certificate, for example on a work-managed phone? Choose **basic mode** on the setup page. It runs over plain HTTP. Copying still works with one tap. To send, paste into the text box instead of using **Paste & Send**.
+
+### 3. Add another computer
+
+Launch OmniClip on the second computer. It finds the hub on your network and shows a notification. Choose **Join …** from its tray menu and enter the 6-digit code from the hub's pairing window. Both computers now share one clipboard.
+
+## Everyday use
+
+### On a Mac or Windows PC
+
+Just copy and paste. The tray menu also gives you:
+
+| Menu item | What it does |
+| --- | --- |
+| **Recent** | Your latest clips. Click one to put it back on this computer's clipboard. |
+| **Send file…** | Sends a file to every device. On a Mac you can also drag files onto the menu-bar icon. |
+| **Pair a phone or tablet…** | Shows the QR code and pairing code (hub only). |
+| **Devices** | Every paired device and whether it's online. Choose **Remove** to revoke one. |
+| **Pause syncing** | Temporarily stops sending and receiving. |
+| **Open at login** | Starts OmniClip automatically. |
+
+Files received from other devices are saved to `~/Downloads/OmniClip` (Windows: `Downloads\OmniClip`), and a notification appears.
+
+### On a phone or tablet
+
+- **Paste & Send** reads your clipboard and sends it to every device. iOS asks you to confirm with a **Paste** button. That's normal.
+- **Send photo or file** opens the picker.
+- **Type or paste here** sends text you type.
+- Every clip in **Recent** has a **Copy** button. Images and files also have **Download** and **Share**.
 
 ### iPhone one-tap Shortcut (optional)
 
-The app's setup page (⚙︎ in the app, secure mode) shows your device's URL and token. In the Shortcuts app:
+iOS never lets web apps read the clipboard in the background. A Shortcut gets you as close as possible: one tap, or a double-tap on the back of the phone.
 
-1. **Get Clipboard**
-2. **Get Contents of URL**: `https://<hub-ip>:7878/api/clips`, Method **POST**, Header `Authorization: Bearer <token>`, Request Body **File** = *Clipboard*
+1. In OmniClip, open **⚙︎ Setup** (secure mode) and reveal your device's **URL** and **token**.
+2. In the **Shortcuts** app, create a new shortcut with two actions:
+   1. **Get Clipboard**
+   2. **Get Contents of URL**
+      - URL: `https://<hub-ip>:7878/api/clips`
+      - Method: **POST**
+      - Header: `Authorization` = `Bearer <your token>`
+      - Request Body: **File**, set to *Clipboard*
+3. Turn on **Show in Share Sheet**, or assign it in **Settings → Accessibility → Touch → Back Tap → Double Tap**.
 
-Add it to the Share sheet, or to **Settings → Accessibility → Touch → Back Tap** for a double-tap on the back of the phone. Text and images both work.
+The Shortcut works for both text and images.
 
-### Tray menu
+## How it works
 
-- **Recent**: click any clip to put it back on this computer's clipboard.
-- **Send file…** (or drag files onto the menu-bar icon on a Mac): files land in `Downloads/OmniClip` on the other computers, with a notification.
-- **Pause syncing**, **Devices** (remove a device), **Open at login**.
+### Architecture
+
+```mermaid
+flowchart TB
+    subgraph LAN["Your Wi-Fi / LAN"]
+        subgraph HubPC["Desktop app on the hub computer"]
+            Tray1["Tray menu + clipboard watcher"]
+            Hub["Embedded hub<br/>HTTPS + WebSocket · history · file store<br/>local certificate authority · mDNS · serves the web app"]
+            Tray1 <--> |loopback| Hub
+        end
+        PC2["Other Mac / Windows<br/>desktop app"]
+        Phone["iPhone / iPad / Android<br/>web app (PWA)"]
+        PC2 <--> |"WSS, found via mDNS"| Hub
+        Phone <--> |"HTTPS + WSS, paired by QR"| Hub
+    end
+```
+
+Every desktop runs the same app. One of them hosts the hub, and the rest connect to it as clients, exactly like the phones. The hub's own tray app also connects as a client over loopback, so every device follows the same code path.
+
+### What happens when you copy
+
+```mermaid
+sequenceDiagram
+    participant Mac as MacBook (desktop app)
+    participant Hub as Hub
+    participant Win as Windows PC (desktop app)
+    participant Phone as iPhone (web app)
+
+    Mac->>Mac: Clipboard watcher sees new content (checks every 500 ms)
+    Mac->>Hub: POST /api/clips (text, or an image/file upload)
+    Hub->>Hub: Store in history (and blob store for images/files)
+    Hub-->>Win: clip:new over WebSocket
+    Hub-->>Phone: clip:new over WebSocket
+    Win->>Hub: GET /api/clips/:id/blob (images/files only)
+    Win->>Win: Write to clipboard and mark it as "applied by OmniClip"
+    Note over Win: The echo guard stops the watcher from sending it straight back
+    Phone->>Phone: Show in Recent, ready for "Copy"
+```
+
+### Choosing the hub, and failover
+
+```mermaid
+stateDiagram-v2
+    [*] --> Searching: app starts
+    Searching --> Client: found a hub on a network we're paired with
+    Searching --> Offer: found an unknown hub
+    Offer --> Client: user enters the pairing code
+    Searching --> Hub: no hub found
+    Client --> Searching: hub unreachable for 10 s
+    Hub --> Client: another hub found, and its name sorts first
+```
+
+- **Discovery.** Hubs advertise themselves over mDNS as `_omniclip._tcp`, with the network ID and hub name.
+- **Replication.** The hub shares its device registry (hashed tokens) and its certificate authority with every paired desktop. That lets any desktop take over **with the same identity**: existing devices and tokens keep working, and phones keep trusting the certificate.
+- **Split brain.** If two hubs ever exist on the same network, for example after a Wi-Fi drop, the one whose name sorts later steps down and rejoins as a client.
+
+### Tech stack
+
+| Part | Built with |
+| --- | --- |
+| Shared protocol | TypeScript + [zod](https://zod.dev) schemas (`packages/protocol`) |
+| Hub | [Fastify 5](https://fastify.dev), `@fastify/websocket`, `@fastify/multipart`, JSON file store, [node-forge](https://github.com/digitalbazaar/forge) for certificates, [bonjour-service](https://github.com/onlxltd/bonjour-service) for mDNS |
+| Web app | [Preact](https://preactjs.com) + [Vite](https://vite.dev), service worker, Web Share Target (about 37 KB gzipped) |
+| Desktop | [Electron 45](https://www.electronjs.org), bundled with esbuild, packaged with electron-builder |
+| Tests | [Vitest](https://vitest.dev) plus an end-to-end script with a real TLS hub and simulated devices |
+
+## Security and privacy
+
+- **Local only.** OmniClip has no servers, telemetry or analytics. Clips travel only between your devices.
+- **Pairing.** A device joins with a 6-digit one-time code. The code changes after every use, every 10 minutes, and after 10 wrong attempts.
+- **Per-device tokens.** Each paired device gets its own random token. The hub only stores a SHA-256 hash of it. Remove a device from **Devices** and it's disconnected immediately.
+- **Encryption.** All secure-mode traffic uses TLS. Each OmniClip network generates its own private certificate authority. Its server certificate covers the hub's LAN addresses and is valid for at most 397 days, so Apple devices accept it.
+- **Desktops verify the hub.** After pairing, desktops pin the network's certificate authority and reject any other server.
+- **Basic mode** (plain HTTP on port 7879) is opt-in and meant only for devices that can't install the certificate. It isn't encrypted, so use it only on networks you trust.
+
+> [!IMPORTANT]
+> Anything you copy on a synced desktop is sent to your other devices, passwords included. Use **Pause syncing** before copying something you don't want shared.
+
+## HTTP API
+
+The hub has a small REST API, handy for scripts, Shortcuts, Tasker or automation tools. Authenticate with `Authorization: Bearer <token>`, or add `?token=<token>` for links and WebSockets.
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/api/info` | Hub identity and protocol version. No authentication. |
+| `GET` | `/ca.crt` | The network's CA certificate. No authentication. |
+| `POST` | `/api/pair` | `{code, name, platform}` → `{token, deviceId, networkId, caPem}` |
+| `GET` | `/api/me` | The device the token belongs to |
+| `GET` | `/api/devices` | Paired devices and their online status |
+| `GET` | `/api/clips?limit=N` | Clip history, newest first |
+| `POST` | `/api/clips` | Send a clip (see the formats below) |
+| `GET` | `/api/clips/:id/blob` | Download an image or file clip |
+| `GET` | `/ws` | WebSocket: `hello`, `clip:new`, `devices`, `revoked` events |
+
+`POST /api/clips` accepts:
+
+```bash
+# Text (JSON)
+curl -X POST https://HUB:7878/api/clips --cacert omniclip-ca.crt \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"text": "Hello from the terminal"}'
+
+# Text (raw body)
+curl -X POST https://HUB:7878/api/clips --cacert omniclip-ca.crt \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: text/plain" --data-binary @notes.txt
+
+# Image or file (multipart). Add -F kind=file before the file to force "file" over "image".
+curl -X POST https://HUB:7878/api/clips --cacert omniclip-ca.crt \
+  -H "Authorization: Bearer $TOKEN" -F "file=@screenshot.png"
+
+# Raw binary body, with an optional filename
+curl -X POST https://HUB:7878/api/clips --cacert omniclip-ca.crt \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/pdf" \
+  -H "X-Filename: report.pdf" --data-binary @report.pdf
+```
+
+Message schemas live in [`packages/protocol/src/index.ts`](packages/protocol/src/index.ts).
+
+## Configuration and storage
+
+| Setting | Value |
+| --- | --- |
+| Secure port (HTTPS + WSS) | `7878` |
+| Setup / basic-mode port (HTTP) | `7879` |
+| mDNS service | `_omniclip._tcp` |
+| History | 200 clips |
+| File and image storage | 1 GB, oldest deleted first |
+| Largest text clip | 1 MB |
+| Largest upload | 200 MB |
+
+Hub data, certificates and stored files live in the app's user-data folder:
+
+- **macOS:** `~/Library/Application Support/OmniClip`
+- **Windows:** `%APPDATA%\OmniClip`
+
+Delete that folder to reset OmniClip completely. You'll need to pair every device again.
 
 ## Development
 
-Requirements: Node 22.12+ (developed on Node 24).
+### Prerequisites
+
+- **Node.js 22.12 or newer** (developed on Node 24) and npm
+- macOS or Windows to run the desktop app. The hub and web app also run on Linux.
+
+### Setup
 
 ```bash
+git clone https://github.com/karammm/omniclip.git
+cd omniclip
 npm install
-node node_modules/electron/install.js   # npm 11 blocks Electron's download script; run it once
-npm run icons                           # regenerate icons (already generated)
-
-npm test                 # unit tests (vitest)
-npm run test:e2e         # real TLS hub + 3 fake devices exchanging text/image/file
-npm run typecheck
-
-npm run dev:hub          # standalone hub in the terminal, prints a pairing QR
-npm run dev:desktop      # builds the web app, bundles and launches the Electron tray app
+node node_modules/electron/install.js   # npm 11 blocks Electron's download script, so run it once by hand
 ```
 
-Layout:
+### Scripts
+
+| Command | What it does |
+| --- | --- |
+| `npm run dev:desktop` | Builds the web app, bundles the Electron app and launches it in the tray |
+| `npm run dev:hub` | Runs a standalone hub in the terminal and prints a pairing QR code (no Electron needed) |
+| `npm run build:web` | Builds the PWA into `apps/web/dist` |
+| `npm test` | Unit and integration tests (Vitest) |
+| `npm run test:e2e` | Starts a real TLS hub and three simulated devices that exchange text, images and files |
+| `npm run typecheck` | Type-checks every workspace |
+| `npm run icons` | Regenerates the app, tray and PWA icons |
+| `npm run dist:mac` / `dist:win` | Builds installers (see below) |
+
+> [!TIP]
+> In development builds, the desktop app also prints the current pairing code to the terminal.
+
+### Project structure
 
 ```
-packages/protocol   zod schemas + types shared by everything
-apps/hub            Fastify HTTPS/WebSocket server, JSON store, local CA, mDNS
-apps/web            Preact PWA served by the hub (feed, Paste & Send, setup, share target)
-apps/desktop        Electron tray app: election/failover, clipboard watcher, pairing window
-scripts             icon generator, end-to-end smoke test
+omniclip/
+├── packages/
+│   └── protocol/        Shared zod schemas, types and constants
+├── apps/
+│   ├── hub/             Fastify HTTPS/WebSocket server, JSON store, local CA, mDNS
+│   ├── web/             Preact PWA: feed, Paste & Send, setup guide, share target
+│   └── desktop/         Electron tray app: hub election and failover, clipboard watcher, pairing window
+├── scripts/             Icon generator, end-to-end test
+└── docs/                README media
 ```
 
-Ports: `7878` (HTTPS/WSS) and `7879` (HTTP for first-time setup and basic mode). Hub data, certificates and file blobs live in the app's user-data folder. History keeps 200 clips and up to 1 GB of images and files, deleting the oldest first.
+### Testing
 
-## Build installers
+The test suite covers protocol validation, pairing and code rotation, auth, broadcast, raw uploads, revocation, TLS, history pruning, hub election and the echo guard. The end-to-end script runs the full stack over real TLS:
 
 ```bash
-npm run dist:mac    # apps/desktop/release/OmniClip-<version>.dmg
-npm run dist:win    # apps/desktop/release/OmniClip Setup <version>.exe (run on Windows, or on a Mac with Wine)
+npm test && npm run test:e2e
 ```
 
-The installers are unsigned:
-- **macOS:** right-click OmniClip.app → **Open** the first time. Also allow **Local Network** access when macOS asks.
-- **Windows:** on the SmartScreen prompt, click **More info → Run anyway**. Allow access on **private networks** when the firewall asks.
+## Building installers
 
-## Known limitations (v1)
+```bash
+npm run dist:mac    # → apps/desktop/release/OmniClip-<version>.dmg
+npm run dist:win    # → apps/desktop/release/OmniClip Setup <version>.exe  (build on Windows, or on macOS with Wine)
+```
 
-- iPhone and iPad need a tap to send and to copy (iOS restriction).
-- After a hub failover, phones keep working only if they reopen the app at the **new hub's** address (rescan the QR from the new hub). Desktops move over automatically.
-- No Bluetooth. Devices must be on the same Wi-Fi/LAN, and guest networks with client isolation won't work.
-- Copying files in Finder or Explorer isn't picked up automatically. Use **Send file…** or drag onto the tray icon.
+The installers aren't code-signed yet:
+
+- **macOS:** the first time, right-click **OmniClip.app → Open**. Allow **Local Network** access when macOS asks.
+- **Windows:** at the SmartScreen prompt, click **More info → Run anyway**. Allow access on **private networks** when Windows Firewall asks.
+
+## Troubleshooting
+
+<details>
+<summary><b>The phone says it can't reach the hub</b></summary>
+
+- Make sure the phone and the computer are on the **same Wi-Fi network**, not a guest network.
+- Check that the computer's firewall allows OmniClip on ports **7878** and **7879**. On Windows, the network must be set to **Private**.
+- If the hub computer's IP address changed, open **Pair a phone or tablet…** again and rescan the QR code.
+</details>
+
+<details>
+<summary><b>"Paste & Send" is greyed out or does nothing</b></summary>
+
+Browsers only allow clipboard reading over HTTPS. Install the certificate as described on the setup page, then open the **secure** link (`https://…:7878`). In basic mode, paste into the text box instead.
+</details>
+
+<details>
+<summary><b>The iPhone still shows a certificate warning</b></summary>
+
+Installing the profile isn't enough on iOS. Also turn it on under **Settings → General → About → Certificate Trust Settings**.
+</details>
+
+<details>
+<summary><b>The second computer doesn't find the hub</b></summary>
+
+Choose **Search again** in the tray menu if it appears, or restart OmniClip. Some routers block mDNS/Bonjour between wired and wireless clients, or between 2.4 GHz and 5 GHz bands. Put both computers on the same band, or turn on multicast/IGMP snooping support in your router.
+</details>
+
+<details>
+<summary><b>Copying a file in Finder or Explorer doesn't sync</b></summary>
+
+That's expected in v0.1. Use **Send file…** or drag the file onto the menu-bar icon.
+</details>
+
+## Known limitations
+
+- **iOS needs a tap** to send and to copy. Apple doesn't allow background clipboard access. That's an iOS rule, not an OmniClip choice.
+- **Phones after a failover** must reopen the app at the new hub's address, which means rescanning its QR code. Desktops move over automatically.
+- **Wi-Fi/LAN only.** There's no Bluetooth or internet relay yet.
+- **Files copied in Finder or Explorer** aren't detected automatically. Use **Send file…**.
+- **Unsigned installers** (see above).
+
+## Roadmap
+
+- [ ] Signed and notarized installers, with auto-update
+- [ ] Phones that follow the hub automatically after a failover
+- [ ] Automatic sync of files copied in Finder and Explorer
+- [ ] Linux desktop build
+- [ ] End-to-end encryption of stored history
+- [ ] Optional Bluetooth for nearby devices without Wi-Fi
+
+## Contributing
+
+Issues and pull requests are welcome.
+
+1. Fork the repository and create a branch.
+2. Make your change and add tests where it makes sense.
+3. Run `npm run typecheck && npm test && npm run test:e2e`.
+4. Open a pull request that describes what you changed and how you tested it.
+
+---
+
+<div align="center">
+<sub>Built with TypeScript, Fastify, Preact and Electron. Your clipboard never leaves your home.</sub>
+</div>
