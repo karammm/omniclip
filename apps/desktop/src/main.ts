@@ -121,7 +121,11 @@ async function becomeHub(): Promise<void> {
 
   const adName = `${cfg.data.deviceName}`;
   state.stopAdvertising = advertise({ port: hub.ports.tls, networkId: hub.networkId, hubName: adName });
-  hub.on('pairingCode', () => void refreshPairWindow());
+  hub.on('pairingCode', (c: { code: string }) => {
+    if (!app.isPackaged) log(`pairing code ${c.code}`);
+    void refreshPairWindow();
+  });
+  if (!app.isPackaged) log(`pairing code ${hub.getPairingCode().code}`);
   hub.on('devices', () => {
     cfg.data.registry = hub.registry();
     cfg.save();
