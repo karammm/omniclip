@@ -28,6 +28,9 @@ button:disabled { opacity:.5; }
 .ok { color:#16a34a; }
 `;
 
+const TRAY_HINT =
+  'OmniClip keeps running in the menu bar (Windows: system tray) after you close this window. Open OmniClip again to bring this window back.';
+
 function page(body: string, script = ''): string {
   return `<!doctype html><html><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
@@ -51,6 +54,7 @@ export function renderPairPage(p: PairPage): string {
       <p class="muted">Each code works once and expires in ${minutes} min.</p>
       <p class="urls">${esc(p.setupUrl)}</p>
       <p class="urls">To join another Mac or Windows PC, run OmniClip on it and enter this code.</p>
+      <p class="urls">${TRAY_HINT}</p>
     `);
   }
   if (p.mode === 'join') {
@@ -80,5 +84,5 @@ export function renderPairPage(p: PairPage): string {
     `,
     );
   }
-  return page(`<h1>OmniClip</h1><p class="muted">${esc(p.message)}</p>`);
+  return page(`<h1>OmniClip</h1><p class="muted">${esc(p.message)}</p><p class="urls">${TRAY_HINT}</p>`);
 }

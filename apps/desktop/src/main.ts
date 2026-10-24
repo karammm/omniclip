@@ -506,6 +506,8 @@ app.whenReady().then(async () => {
   guard.prime((await snapshot(true))?.fp ?? null);
   setInterval(() => void watchTick(), 500);
   await boot();
+  // The tray icon can be hidden (MacBook notch, menu bar settings), so show a window on a manual launch.
+  if (!app.getLoginItemSettings().wasOpenedAtLogin) await openPairWindow();
 });
 
 let quitting = false;
