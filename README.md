@@ -21,6 +21,10 @@ Drop a file on the Mac and pick it up on the iPad. No cloud, no account, no app 
 
 <sub>Text from a MacBook, a note typed on an iPhone, and a photo all appear on every paired device in real time. <a href="docs/demo.mp4">Watch as MP4</a></sub>
 
+<br><br>
+
+**[⬇️ Download for Mac, Windows, Android and iPhone](https://github.com/karammm/omniclip/releases/latest)**
+
 </div>
 
 ---
@@ -30,6 +34,7 @@ Drop a file on the Mac and pick it up on the iPad. No cloud, no account, no app 
 - [Why OmniClip](#why-omniclip)
 - [Features](#features)
 - [Supported devices](#supported-devices)
+- [Install](#install)
 - [Quick start](#quick-start)
 - [Everyday use](#everyday-use)
 - [How it works](#how-it-works)
@@ -37,7 +42,7 @@ Drop a file on the Mac and pick it up on the iPad. No cloud, no account, no app 
 - [HTTP API](#http-api)
 - [Configuration and storage](#configuration-and-storage)
 - [Development](#development)
-- [Building installers](#building-installers)
+- [Releases and building installers](#releases-and-building-installers)
 - [Troubleshooting](#troubleshooting)
 - [Known limitations](#known-limitations)
 - [Roadmap](#roadmap)
@@ -55,7 +60,9 @@ OmniClip connects **all** of your devices instead, and keeps your data **at home
 | | |
 | --- | --- |
 | 🔄 **Automatic desktop sync** | On Mac and Windows, copy as usual and paste on the other computer. No buttons. |
-| 📱 **Phones and tablets without an app store** | iPhone, iPad and Android join through an installable web app (PWA). |
+| 📱 **Apps for every device** | Mac `.dmg`, Windows `.exe`/`.msi`, an Android app and an iPhone/iPad app. No app store needed. |
+| 📷 **Pair by scanning a QR code** | Open the OmniClip app on your phone, tap **Scan QR code**, done. |
+| ⚡ **Auto-send on Android** | Copy something, open OmniClip, and it's already on your computer. |
 | 🖼️ **Text, links, images and files** | Images go straight onto the desktop clipboard. Files are saved to `Downloads/OmniClip`. |
 | 🕘 **History** | Your last 200 clips. Click any of them to copy it again. |
 | 📤 **Share sheet integration** | Android: **Share → OmniClip** from any app. iOS: a one-tap Shortcut, including Back Tap. |
@@ -69,30 +76,96 @@ OmniClip connects **all** of your devices instead, and keeps your data **at home
 | --- | --- | --- | --- |
 | **Mac** (macOS 12+) | Menu-bar app | Automatic: just copy | Automatic: just paste |
 | **Windows** 10/11 | System-tray app | Automatic: just copy | Automatic: just paste |
-| **Android** | Web app (installable) | **Paste & Send**, or **Share → OmniClip** | Tap **Copy** |
-| **iPhone / iPad** | Web app (Add to Home Screen) | **Paste & Send**, or a one-tap Shortcut | Tap **Copy** |
-| Anything with a browser | Web app | Paste into the text box | Tap **Copy** |
+| **Android** 8+ | OmniClip app (`.apk`) | Opening the app sends your clipboard automatically, or **Share → OmniClip** | Tap **Copy** |
+| **iPhone / iPad** | OmniClip app (`.ipa` / Xcode) | **Paste & Send**, or a one-tap Shortcut | Tap **Copy** |
+| Anything with a browser | Web app served by the hub | **Paste & Send**, or paste into the text box | Tap **Copy** |
 
 > [!NOTE]
 > All devices must be on the **same Wi-Fi or LAN**. Guest networks that isolate clients from each other block local connections.
+
+## Install
+
+Download everything from the **[latest release](https://github.com/karammm/omniclip/releases/latest)**.
+
+| Device | File | First launch |
+| --- | --- | --- |
+| **Mac**, Apple Silicon (M1–M4) | `OmniClip-<version>-mac-arm64.dmg` | See *macOS* below |
+| **Mac**, Intel | `OmniClip-<version>-mac-x64.dmg` | See *macOS* below |
+| **Windows**, home PCs | `OmniClip-Setup-<version>-x64.exe` | See *Windows* below |
+| **Windows**, managed PCs | `OmniClip-<version>-x64.msi` | Deploy with Intune, Group Policy or `msiexec /i` |
+| **Android** | `OmniClip-<version>-android.apk` | See *Android* below |
+| **iPhone / iPad** | `OmniClip-<version>-ios-unsigned.ipa` | See *iPhone and iPad* below |
+
+The apps aren't signed by Apple or Microsoft yet, which costs money every year. Your device shows a warning the first time, and you only have to get past it once.
+
+<details>
+<summary><b>macOS</b></summary>
+
+1. Open the `.dmg` and drag **OmniClip** into **Applications**.
+2. Open OmniClip. macOS says it can't verify the app. Click **Done**.
+3. Open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway** next to OmniClip.
+4. Allow **Local Network** access when macOS asks.
+
+Or run this once in Terminal instead of steps 2–3: `xattr -dr com.apple.quarantine /Applications/OmniClip.app`
+</details>
+
+<details>
+<summary><b>Windows</b></summary>
+
+1. Run `OmniClip-Setup-<version>-x64.exe`.
+2. At the blue **Windows protected your PC** screen, click **More info → Run anyway**.
+3. When Windows Firewall asks, allow OmniClip on **Private networks**.
+</details>
+
+<details>
+<summary><b>Android</b></summary>
+
+1. Download the `.apk` on your phone, or send it to the phone.
+2. Open it. Android asks you to allow installs from your browser or file manager. Allow it, then tap **Install**.
+3. If Play Protect warns about an unknown app, tap **Install anyway**.
+</details>
+
+<details>
+<summary><b>iPhone and iPad</b></summary>
+
+Apple only allows apps from the App Store unless you sign them yourself. That's free with an Apple ID, and there are two ways to do it:
+
+- **Sideloadly or AltStore (no Mac needed for Sideloadly).** Install [Sideloadly](https://sideloadly.io), connect your iPhone, drag in `OmniClip-<version>-ios-unsigned.ipa` and sign in with your Apple ID. On the phone, trust the developer profile in **Settings → General → VPN & Device Management**.
+- **Xcode (on a Mac).** Run `npm run ios -w @omniclip/mobile` from a clone of this repo. In Xcode, choose your iPhone, set **Signing & Capabilities → Team** to your Apple ID, and press **Run**.
+
+Apps signed with a free Apple ID stop opening after 7 days. Reinstall, or refresh in Sideloadly or AltStore, to keep using it. A paid Apple Developer account removes this limit.
+
+You can also skip the app and use the [web app](#web-app-no-install) in Safari.
+</details>
 
 ## Quick start
 
 ### 1. Install the desktop app
 
-Install OmniClip on at least one Mac or Windows PC (see [Building installers](#building-installers)), then launch it. A clipboard icon appears in the menu bar (Mac) or system tray (Windows).
+Install OmniClip on at least one Mac or Windows PC (see [Install](#install)), then open it. The OmniClip window opens, and a clipboard icon appears in the menu bar (Mac) or system tray (Windows).
 
 The first computer you start becomes the **hub** automatically.
 
+> [!TIP]
+> Can't see the menu-bar icon? MacBooks hide extra icons behind the notch. Open OmniClip again from Applications to bring its window back.
+
 ### 2. Pair a phone or tablet
 
-1. In the tray menu, choose **Pair a phone or tablet…**. A window shows a QR code and a 6-digit code.
-2. Scan the QR code with the phone's camera. A setup page opens.
-3. Follow the setup page. You only do this once per phone:
+**With the OmniClip app (recommended)**
+
+1. On the computer, the OmniClip window shows a QR code. You can also open it from the tray menu with **Pair a phone or tablet…**.
+2. Open the OmniClip app on your phone and tap **📷 Scan QR code**. Done.
+
+No camera? Tap **Enter the code instead**, then type the hub address and the 6-digit code shown in the window.
+
+#### Web app (no install)
+
+1. Scan the QR code with the phone's normal camera app. A setup page opens in the browser.
+2. Follow the setup page. You only do this once per phone:
    - **Install the OmniClip certificate.** Browsers only allow clipboard access over HTTPS, and this certificate lets your phone trust your hub.
      - *iPhone/iPad:* download the profile, install it in **Settings → Profile Downloaded**, then turn it on in **Settings → General → About → Certificate Trust Settings**.
      - *Android:* download the certificate and install it in **Settings → Security & privacy → More security settings → Install from device storage → CA certificate**. The wording varies by phone, so searching Settings for "certificate" helps.
-   - Open the secure app and tap **Pair this device**.
+   - Open the secure link and tap **Pair this device**.
    - Add it to your Home Screen. *iOS:* Share → **Add to Home Screen**. *Android:* ⋮ → **Install app**.
 
 > [!TIP]
@@ -124,7 +197,9 @@ Files received from other devices are saved to `~/Downloads/OmniClip` (Windows: 
 - **Paste & Send** reads your clipboard and sends it to every device. iOS asks you to confirm with a **Paste** button. That's normal.
 - **Send photo or file** opens the picker.
 - **Type or paste here** sends text you type.
-- Every clip in **Recent** has a **Copy** button. Images and files also have **Download** and **Share**.
+- Every clip in **Recent** has a **Copy** button. Images and files also have **Save / Share** (app) or **Download** and **Share** (web app).
+- **Android app:** copy something in any app, then open OmniClip, and it's sent automatically. You can also use **Share → OmniClip** from any app, for text, photos or files.
+- **iPhone app:** turn on automatic sending in **⚙︎ Settings** in the app. To stop iOS asking each time, go to **Settings → Apps → OmniClip → Paste from Other Apps → Allow**.
 
 ### iPhone one-tap Shortcut (optional)
 
@@ -155,8 +230,10 @@ flowchart TB
             Tray1 <--> |loopback| Hub
         end
         PC2["Other Mac / Windows<br/>desktop app"]
-        Phone["iPhone / iPad / Android<br/>web app (PWA)"]
+        App["iPhone / iPad / Android<br/>OmniClip app"]
+        Phone["Any phone or browser<br/>web app (PWA)"]
         PC2 <--> |"WSS, found via mDNS"| Hub
+        App <--> |"HTTP + WS on the LAN, paired by QR"| Hub
         Phone <--> |"HTTPS + WSS, paired by QR"| Hub
     end
 ```
@@ -208,6 +285,8 @@ stateDiagram-v2
 | Hub | [Fastify 5](https://fastify.dev), `@fastify/websocket`, `@fastify/multipart`, JSON file store, [node-forge](https://github.com/digitalbazaar/forge) for certificates, [bonjour-service](https://github.com/onlxltd/bonjour-service) for mDNS |
 | Web app | [Preact](https://preactjs.com) + [Vite](https://vite.dev), service worker, Web Share Target (about 37 KB gzipped) |
 | Desktop | [Electron 45](https://www.electronjs.org), bundled with esbuild, packaged with electron-builder |
+| Mobile | [Capacitor 8](https://capacitorjs.com) wrapping the web UI, plus a small native Android plugin (share inbox, image copy) |
+| Releases | GitHub Actions: `.dmg`, `.exe`, `.msi`, `.apk` and `.ipa` from one tag |
 | Tests | [Vitest](https://vitest.dev) plus an end-to-end script with a real TLS hub and simulated devices |
 
 ## Security and privacy
@@ -217,7 +296,8 @@ stateDiagram-v2
 - **Per-device tokens.** Each paired device gets its own random token. The hub only stores a SHA-256 hash of it. Remove a device from **Devices** and it's disconnected immediately.
 - **Encryption.** All secure-mode traffic uses TLS. Each OmniClip network generates its own private certificate authority. Its server certificate covers the hub's LAN addresses and is valid for at most 397 days, so Apple devices accept it.
 - **Desktops verify the hub.** After pairing, desktops pin the network's certificate authority and reject any other server.
-- **Basic mode** (plain HTTP on port 7879) is opt-in and meant only for devices that can't install the certificate. It isn't encrypted, so use it only on networks you trust.
+- **The phone apps** talk to the hub over plain HTTP on port 7879. That's why they don't need the certificate install, but it also means their traffic is protected only by your Wi-Fi encryption (WPA2/WPA3), not by TLS. Every request still needs the device's token. Encrypted connections for the apps are on the [roadmap](#roadmap). Until then, avoid public or shared Wi-Fi.
+- **Basic mode** in the web app also uses plain HTTP on port 7879, with the same caveat.
 
 > [!IMPORTANT]
 > Anything you copy on a synced desktop is sent to your other devices, passwords included. Use **Pause syncing** before copying something you don't want shared.
@@ -308,7 +388,11 @@ node node_modules/electron/install.js   # npm 11 blocks Electron's download scri
 | `npm run test:e2e` | Starts a real TLS hub and three simulated devices that exchange text, images and files |
 | `npm run typecheck` | Type-checks every workspace |
 | `npm run icons` | Regenerates the app, tray and PWA icons |
-| `npm run dist:mac` / `dist:win` | Builds installers (see below) |
+| `npm run dist:mac` / `dist:win` | Builds desktop installers (see below) |
+| `npm run build -w @omniclip/mobile` | Builds the app bundle and syncs it into the Android and iOS projects |
+| `npm run android -w @omniclip/mobile` | Builds, then opens the project in Android Studio |
+| `npm run ios -w @omniclip/mobile` | Builds, then opens the project in Xcode |
+| `node scripts/set-version.mjs 1.2.3` | Sets one version in every package and both mobile projects |
 
 > [!TIP]
 > In development builds, the desktop app also prints the current pairing code to the terminal.
@@ -321,9 +405,11 @@ omniclip/
 │   └── protocol/        Shared zod schemas, types and constants
 ├── apps/
 │   ├── hub/             Fastify HTTPS/WebSocket server, JSON store, local CA, mDNS
-│   ├── web/             Preact PWA: feed, Paste & Send, setup guide, share target
-│   └── desktop/         Electron tray app: hub election and failover, clipboard watcher, pairing window
-├── scripts/             Icon generator, end-to-end test
+│   ├── web/             Preact UI: the PWA and (with --mode native) the mobile apps
+│   ├── desktop/         Electron tray app: hub election and failover, clipboard watcher, pairing window
+│   └── mobile/          Capacitor Android and iOS projects, plus the share-inbox and image-copy plugin
+├── .github/workflows/   CI and the release pipeline
+├── scripts/             Icon generator, version setter, end-to-end test
 └── docs/                README media
 ```
 
@@ -335,17 +421,38 @@ The test suite covers protocol validation, pairing and code rotation, auth, broa
 npm test && npm run test:e2e
 ```
 
-## Building installers
+## Releases and building installers
+
+### Publishing a release
+
+Every installer is built by GitHub Actions ([`release.yml`](.github/workflows/release.yml)). To publish a version:
 
 ```bash
-npm run dist:mac    # → apps/desktop/release/OmniClip-<version>.dmg
-npm run dist:win    # → apps/desktop/release/OmniClip Setup <version>.exe  (build on Windows, or on macOS with Wine)
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
-The installers aren't code-signed yet:
+About 15 minutes later, a GitHub Release appears with the Mac `.dmg` files, the Windows `.exe` and `.msi`, the Android `.apk` and the unsigned iOS `.ipa`. The version number comes from the tag. You can also run the workflow by hand from the **Actions** tab to build files without publishing.
 
-- **macOS:** the first time, right-click **OmniClip.app → Open**. Allow **Local Network** access when macOS asks.
-- **Windows:** at the SmartScreen prompt, click **More info → Run anyway**. Allow access on **private networks** when Windows Firewall asks.
+**Android signing.** For installed apps to update cleanly, every release must be signed with the same key. Add these repository secrets (**Settings → Secrets and variables → Actions**):
+
+| Secret | Value |
+| --- | --- |
+| `ANDROID_KEYSTORE_BASE64` | `base64 -i omniclip.jks` |
+| `ANDROID_KEYSTORE_PASSWORD` | Keystore password |
+| `ANDROID_KEY_ALIAS` | Key alias |
+| `ANDROID_KEY_PASSWORD` | Key password |
+
+Create the key once with `keytool -genkeypair -v -keystore omniclip.jks -alias omniclip -keyalg RSA -keysize 4096 -validity 10000`, and keep a backup. If you lose it, users have to uninstall before they can update. Without these secrets, the APK is signed with a temporary key.
+
+### Building on your own machine
+
+```bash
+npm run dist:mac                     # → apps/desktop/release/OmniClip-<version>-mac-{arm64,x64}.dmg
+npm run dist:win                     # → .exe and .msi (run this on Windows)
+npm run apk -w @omniclip/mobile      # → apps/mobile/android/app/build/outputs/apk/release/ (needs JDK 21 + Android SDK)
+npm run ios -w @omniclip/mobile      # opens Xcode; press Run to install on your iPhone
+```
 
 ## Troubleshooting
 
@@ -384,14 +491,19 @@ That's expected in v0.1. Use **Send file…** or drag the file onto the menu-bar
 ## Known limitations
 
 - **iOS needs a tap** to send and to copy. Apple doesn't allow background clipboard access. That's an iOS rule, not an OmniClip choice.
-- **Phones after a failover** must reopen the app at the new hub's address, which means rescanning its QR code. Desktops move over automatically.
+- **Phones after a failover** must pair with the new hub, which means rescanning its QR code. Desktops move over automatically.
+- **The phone apps use HTTP on your LAN**, not TLS (see [Security](#security-and-privacy)).
+- **The iPhone app** needs re-signing every 7 days with a free Apple ID, and it isn't on the App Store.
 - **Wi-Fi/LAN only.** There's no Bluetooth or internet relay yet.
 - **Files copied in Finder or Explorer** aren't detected automatically. Use **Send file…**.
-- **Unsigned installers** (see above).
+- **Unsigned installers.** Each platform shows a warning the first time (see [Install](#install)).
 
 ## Roadmap
 
+- [x] Mac, Windows, Android and iOS apps, built automatically on every release
 - [ ] Signed and notarized installers, with auto-update
+- [ ] TLS with certificate pinning in the phone apps
+- [ ] App Store and Google Play listings
 - [ ] Phones that follow the hub automatically after a failover
 - [ ] Automatic sync of files copied in Finder and Explorer
 - [ ] Linux desktop build

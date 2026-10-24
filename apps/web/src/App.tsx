@@ -1,9 +1,27 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { Clip, Device } from '@omniclip/protocol';
-import { ApiError, blobUrl, defaultDeviceName, detectPlatform, loadSession, pair, saveSession, sendFile, sendText, type Session } from './api';
+import {
+  ApiError,
+  blobUrl,
+  checkHub,
+  defaultDeviceName,
+  detectPlatform,
+  loadSession,
+  NATIVE,
+  pair,
+  parseHubInput,
+  saveSession,
+  sendFile,
+  sendText,
+  setHubBase,
+  type Session,
+} from './api';
 import { canCopyImages, canReadClipboard, copyImage, copyText, readClipboard, secure } from './clipboard';
 import { Setup } from './Setup';
 import { useHub, type Status } from './useHub';
+
+// inline MODE check so the browser build drops the native chunk entirely
+const native = () => (import.meta.env.MODE === 'native' ? import('./native') : Promise.reject(new Error('native only')));
 
 function pairCodeFromHash(): string | null {
   const m = location.hash.match(/pair=(\d{4,16})/);
@@ -34,8 +52,8 @@ export function App() {
   };
 
   let page;
-  if (path.startsWith('/setup')) page = <Setup session={session} />;
-  else if (!session) page = <PairScreen onPaired={setSession} />;
+  if (!NATIVE && path.startsWith('/setup')) page = <Setup session={session} />;
+  else if (!session) page = NATIVE ? <NativePairScreen onPaired={setSession} /> : <PairScreen onPaired={setSession} />;
   else page = <Main session={session} onRevoked={signOut} toast={showToast} />;
 
   return (
@@ -96,13 +114,177 @@ function PairScreen({ onPaired }: { onPaired: (s: Session) => void }) {
   );
 }
 
+/** The Android/iOS app: scan the QR code from the desktop's pairing window, or type the hub address and code. */
+function NativePairScreen({ onPaired }: { onPaired: (s: Session) => void }) {
+  const platform = detectPlatform();
+  const [hub, setHub] = useState('');
+  const [code, setCode] = useState('');
+  const [name, setName] = useState(defaultDeviceName(platform));
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const connect = async (hubInput: string, pairCode: string) => {
+    setBusy(true);
+    setError('');
+    try {
+      const target = parseHubInput(hubInput);
+      if (!target) throw new Error('Enter the hub address shown in the OmniClip window, for example 192.168.1.5');
+      if (!(await checkHub(target.hub))) throw new Error(`No OmniClip hub at ${new URL(target.hub).hostname}. Is this phone on the same Wi-Fi?`);
+      setHubBase(target.hub);
+      const deviceName = name.trim() || defaultDeviceName(platform);
+      const res = await pair((target.code ?? pairCode).trim(), deviceName, platform);
+      const s: Session = { token: res.token, deviceId: res.deviceId, networkId: res.networkId, name: deviceName, hub: target.hub };
+      saveSession(s);
+      onPaired(s);
+    } catch (err) {
+      loadSession(); // restores the hub address of any existing session
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    let off = () => {};
+    let cancelled = false;
+    void native()
+      .then((n) =>
+        n.pairLinks((url) => {
+          const target = parseHubInput(url);
+          if (!target?.code) return;
+          setHub(new URL(target.hub).hostname);
+          setCode(target.code);
+          void connect(url, target.code);
+        }),
+      )
+      .then((dispose) => (cancelled ? dispose() : (off = dispose)));
+    return () => {
+      cancelled = true;
+      off();
+    };
+  }, []);
+
+  const scan = async () => {
+    setError('');
+    try {
+      const text = await (await native()).scanQr();
+      if (!text) return;
+      const target = parseHubInput(text);
+      if (!target) return setError('That QR code is not from OmniClip.');
+      setHub(new URL(target.hub).hostname);
+      if (target.code) {
+        setCode(target.code);
+        await connect(text, target.code);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not open the camera');
+    }
+  };
+
+  return (
+    <main class="center">
+      <img src="/icons/icon-192.png" alt="" width={72} height={72} />
+      <h1>Join OmniClip</h1>
+      <p class="muted">
+        On your Mac or PC, open the OmniClip window (or choose <b>Pair a phone or tablet…</b> in its menu), then scan the QR code.
+      </p>
+      <button class="primary big" onClick={scan} disabled={busy}>
+        {busy ? 'Pairing…' : '📷 Scan QR code'}
+      </button>
+      <details class="card manual">
+        <summary>Enter the code instead</summary>
+        <form
+          class="stack"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void connect(hub, code);
+          }}
+        >
+          <label>
+            Hub address
+            <input inputMode="url" autoCapitalize="off" autoCorrect="off" placeholder="192.168.1.5" value={hub} onInput={(e) => setHub(e.currentTarget.value)} required />
+          </label>
+          <label>
+            Pairing code
+            <input inputMode="numeric" autoComplete="one-time-code" maxLength={16} value={code} onInput={(e) => setCode(e.currentTarget.value)} required />
+          </label>
+          <label>
+            This device's name
+            <input value={name} maxLength={64} onInput={(e) => setName(e.currentTarget.value)} />
+          </label>
+          <button class="primary" disabled={busy || code.length < 4 || !hub.trim()}>
+            Pair this device
+          </button>
+        </form>
+      </details>
+      {error && <p class="error">{error}</p>}
+    </main>
+  );
+}
+
 // ---------------------------------------------------------------- main
+
+const AUTO_SEND_KEY = 'omniclip.autoSend';
+const LAST_SENT_KEY = 'omniclip.lastAutoSent';
+
+function autoSendEnabled(): boolean {
+  try {
+    const v = localStorage.getItem(AUTO_SEND_KEY);
+    // iOS asks for permission on every read unless the user allows pasting in Settings, so it starts off there
+    return v === null ? detectPlatform() === 'android' : v === '1';
+  } catch {
+    return false;
+  }
+}
+
+function fingerprint(c: NonNullable<Awaited<ReturnType<typeof readClipboard>>>): string {
+  return c.kind === 'text' ? `t:${c.text.length}:${c.text.slice(0, 256)}` : `i:${c.blob.size}:${c.blob.type}`;
+}
 
 function Main({ session, onRevoked, toast }: { session: Session; onRevoked: () => void; toast: (m: string) => void }) {
   const { status, clips, devices } = useHub(session.token, onRevoked);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const clipsRef = useRef(clips);
+  clipsRef.current = clips;
+
+  // Native app: send whatever is on the clipboard when the app is opened (Android allows this while in front)
+  useEffect(() => {
+    if (!NATIVE) return;
+    let cancelled = false;
+    const check = async () => {
+      if (!autoSendEnabled()) return;
+      try {
+        const content = await readClipboard();
+        if (!content || cancelled) return;
+        const fp = fingerprint(content);
+        if (localStorage.getItem(LAST_SENT_KEY) === fp) return;
+        // skip things that arrived through OmniClip and were copied from the feed
+        if (content.kind === 'text' && clipsRef.current.some((c) => c.text === content.text)) {
+          localStorage.setItem(LAST_SENT_KEY, fp);
+          return;
+        }
+        localStorage.setItem(LAST_SENT_KEY, fp);
+        if (content.kind === 'text') await sendText(session.token, content.text);
+        else await sendFile(session.token, content.blob, `image.${content.blob.type.split('/')[1] ?? 'png'}`);
+        toast('Sent your clipboard to all devices');
+      } catch {
+        // clipboard empty or not readable yet
+      }
+    };
+    const timer = window.setTimeout(check, 800);
+    let off = () => {};
+    void native().then((n) => {
+      if (!cancelled) off = n.onResume(() => window.setTimeout(check, 500));
+    });
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      off();
+    };
+  }, [session.token]);
 
   const run = async (fn: () => Promise<unknown>, done: string) => {
     setBusy(true);
@@ -141,6 +323,39 @@ function Main({ session, onRevoked, toast }: { session: Session; onRevoked: () =
     if (fileInput.current) fileInput.current.value = '';
   };
 
+  // Android app: items shared to OmniClip from other apps
+  useEffect(() => {
+    if (!NATIVE) return;
+    let cancelled = false;
+    const drain = () =>
+      void native().then(async (n) => {
+        const items = await n.takeShared();
+        if (!items.length || cancelled) return;
+        await run(async () => {
+          for (const item of items) {
+            if (item.kind === 'text') await sendText(session.token, item.text);
+            else {
+              const blob = await (await fetch(`data:${item.mime};base64,${item.data}`)).blob();
+              await sendFile(session.token, blob, item.name, item.mime.startsWith('image/') ? undefined : 'file');
+            }
+          }
+        }, 'Shared to all devices');
+      });
+    drain();
+    let offShared = () => {};
+    let offResume = () => {};
+    void native().then((n) => {
+      if (cancelled) return;
+      offShared = n.onShared(drain);
+      offResume = n.onResume(drain);
+    });
+    return () => {
+      cancelled = true;
+      offShared();
+      offResume();
+    };
+  }, [session.token]);
+
   // Android share target: the service worker parked shared items in a cache
   useEffect(() => {
     if (!new URLSearchParams(location.search).has('share') || !('caches' in window)) return;
@@ -166,10 +381,18 @@ function Main({ session, onRevoked, toast }: { session: Session; onRevoked: () =
         <img src="/icons/icon-192.png" alt="" width={28} height={28} />
         <strong>OmniClip</strong>
         <StatusPill status={status} />
-        <a class="ghost" href="/setup" aria-label="Setup">
-          ⚙︎
-        </a>
+        {NATIVE ? (
+          <button class="ghost" aria-label="Settings" onClick={() => setSettingsOpen(!settingsOpen)}>
+            ⚙︎
+          </button>
+        ) : (
+          <a class="ghost" href="/setup" aria-label="Setup">
+            ⚙︎
+          </a>
+        )}
       </header>
+
+      {NATIVE && settingsOpen && <NativeSettings session={session} onUnpair={onRevoked} />}
 
       {!secure && (
         <p class="banner">
@@ -247,6 +470,10 @@ function ClipRow({ clip, session, toast }: { clip: Clip; session: Session; toast
   };
 
   const share = async () => {
+    if (NATIVE) {
+      await (await native()).shareFile(url, clip.name ?? 'file').catch(() => {});
+      return;
+    }
     try {
       const blob = await (await fetch(url)).blob();
       const file = new File([blob], clip.name ?? 'file', { type: clip.mime });
@@ -278,17 +505,20 @@ function ClipRow({ clip, session, toast }: { clip: Clip; session: Session; toast
       )}
       <div class="row">
         {(clip.kind === 'text' || (clip.kind === 'image' && canCopyImages)) && <button onClick={copy}>Copy</button>}
-        {isLink && (
-          <a class="button" href={clip.text!.trim()} target="_blank" rel="noreferrer">
-            Open
-          </a>
-        )}
-        {clip.kind !== 'text' && (
+        {isLink &&
+          (NATIVE ? (
+            <button onClick={() => void native().then((n) => n.openUrl(clip.text!.trim()))}>Open</button>
+          ) : (
+            <a class="button" href={clip.text!.trim()} target="_blank" rel="noreferrer">
+              Open
+            </a>
+          ))}
+        {clip.kind !== 'text' && !NATIVE && (
           <a class="button" href={url} download={clip.name}>
             Download
           </a>
         )}
-        {clip.kind !== 'text' && 'share' in navigator && <button onClick={share}>Share</button>}
+        {clip.kind !== 'text' && (NATIVE || 'share' in navigator) && <button onClick={share}>{NATIVE ? 'Save / Share' : 'Share'}</button>}
       </div>
     </li>
   );
@@ -314,5 +544,42 @@ function DeviceList({ devices, me }: { devices: Device[]; me: string }) {
       </ul>
       <p class="muted small">You can remove a device from the OmniClip menu on the hub computer.</p>
     </details>
+  );
+}
+
+function NativeSettings({ session, onUnpair }: { session: Session; onUnpair: () => void }) {
+  const [auto, setAuto] = useState(autoSendEnabled);
+  const ios = detectPlatform() !== 'android';
+  const toggle = (on: boolean) => {
+    setAuto(on);
+    try {
+      localStorage.setItem(AUTO_SEND_KEY, on ? '1' : '0');
+    } catch {
+      // ignore
+    }
+  };
+  return (
+    <section class="card stack settings">
+      <label class="switch">
+        <input type="checkbox" checked={auto} onChange={(e) => toggle(e.currentTarget.checked)} />
+        <span>Send my clipboard when I open OmniClip</span>
+      </label>
+      {ios && (
+        <p class="muted small">
+          To stop iOS asking every time, go to <b>Settings → Apps → OmniClip → Paste from Other Apps</b> and choose <b>Allow</b>.
+        </p>
+      )}
+      <p class="muted small">
+        Connected to {session.hub ? new URL(session.hub).hostname : 'hub'} as <b>{session.name}</b>.
+      </p>
+      <button
+        onClick={() => {
+          saveSession(null);
+          onUnpair();
+        }}
+      >
+        Unpair this device
+      </button>
+    </section>
   );
 }

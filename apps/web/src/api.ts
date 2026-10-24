@@ -1,24 +1,39 @@
-import type { Clip, Device, PairResponse, Platform } from '@omniclip/protocol';
+import { HUB_PORT_HTTP, type Clip, type Device, type PairResponse, type Platform } from '@omniclip/protocol';
+
+/** True in the Android/iOS app (a `vite build --mode native` bundle), false in the browser PWA. */
+export const NATIVE = import.meta.env.MODE === 'native';
 
 export interface Session {
   token: string;
   deviceId: string;
   name: string;
   networkId: string;
+  /** Hub base URL. Only set in the native app; the PWA is served by the hub itself. */
+  hub?: string;
 }
 
 const KEY = 'omniclip.session';
 
+// The PWA calls its own origin. The native app is served from the device, so it calls the hub by address.
+let hubBase = '';
+
+export function setHubBase(url?: string): void {
+  hubBase = (url ?? '').replace(/\/+$/, '');
+}
+
 export function loadSession(): Session | null {
   try {
     const raw = localStorage.getItem(KEY);
-    return raw ? (JSON.parse(raw) as Session) : null;
+    const s = raw ? (JSON.parse(raw) as Session) : null;
+    setHubBase(s?.hub);
+    return s;
   } catch {
     return null;
   }
 }
 
 export function saveSession(s: Session | null): void {
+  setHubBase(s?.hub);
   try {
     if (s) localStorage.setItem(KEY, JSON.stringify(s));
     else localStorage.removeItem(KEY);
@@ -51,7 +66,7 @@ export class ApiError extends Error {
 async function call<T>(path: string, init: RequestInit = {}, token?: string): Promise<T> {
   const headers = new Headers(init.headers);
   if (token) headers.set('Authorization', `Bearer ${token}`);
-  const res = await fetch(path, { ...init, headers });
+  const res = await fetch(hubBase + path, { ...init, headers });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new ApiError(res.status, (body as { error?: string }).error ?? res.statusText);
   return body as T;
@@ -77,10 +92,47 @@ export function listDevices(token: string): Promise<Device[]> {
 }
 
 export function blobUrl(token: string, clip: Clip): string {
-  return `/api/clips/${clip.id}/blob?token=${encodeURIComponent(token)}`;
+  return `${hubBase}/api/clips/${clip.id}/blob?token=${encodeURIComponent(token)}`;
 }
 
 export function wsUrl(token: string): string {
+  const q = `/ws?token=${encodeURIComponent(token)}`;
+  if (hubBase) return hubBase.replace(/^http/, 'ws') + q;
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${proto}//${location.host}/ws?token=${encodeURIComponent(token)}`;
+  return `${proto}//${location.host}${q}`;
+}
+
+/**
+ * Turns what the user scanned or typed into a hub URL and (optional) pairing code.
+ * Accepts the desktop's QR link (`http://192.168.1.5:7879/setup#pair=123456`), a URL, or a bare IP/hostname.
+ */
+export function parseHubInput(input: string): { hub: string; code?: string } | null {
+  const text = input.trim();
+  if (!text) return null;
+  let url: URL;
+  try {
+    url = new URL(/^[a-z]+:\/\//i.test(text) ? text : `http://${text}`);
+  } catch {
+    return null;
+  }
+  if (url.protocol === 'omniclip:') {
+    const hub = url.searchParams.get('hub');
+    return hub ? parseHubInput(`${hub}${url.searchParams.get('code') ? `#pair=${url.searchParams.get('code')}` : ''}`) : null;
+  }
+  if (!url.hostname) return null;
+  const code = /pair=(\d{4,16})/.exec(url.hash + url.search)?.[1];
+  // the app always uses the hub's plain-HTTP port; the HTTPS port only exists for browsers
+  return { hub: `http://${url.hostname}:${HUB_PORT_HTTP}`, code };
+}
+
+export async function checkHub(hub: string): Promise<boolean> {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 4000);
+    const res = await fetch(`${hub}/api/info`, { signal: ctrl.signal });
+    clearTimeout(timer);
+    return res.ok && ((await res.json()) as { app?: string }).app === 'omniclip';
+  } catch {
+    return false;
+  }
 }

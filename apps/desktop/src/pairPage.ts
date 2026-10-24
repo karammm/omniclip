@@ -26,6 +26,7 @@ button { font:inherit; font-size:15px; padding:10px 22px; border-radius:10px; bo
 button:disabled { opacity:.5; }
 .err { color:#dc2626; min-height:20px; }
 .ok { color:#16a34a; }
+.sel { -webkit-user-select:text; user-select:text; }
 `;
 
 const TRAY_HINT =
@@ -40,17 +41,18 @@ function page(body: string, script = ''): string {
 export function renderPairPage(p: PairPage): string {
   if (p.mode === 'hub') {
     const minutes = Math.max(1, Math.round((p.expiresAt - Date.now()) / 60000));
+    const host = p.setupUrl ? new URL(p.setupUrl).hostname : '';
     return page(`
       <h1>Pair a phone or tablet</h1>
       <p class="muted">The device must be on the same Wi-Fi as this computer.</p>
       ${p.qr ? `<div class="qr"><img src="${p.qr}" alt="QR code"></div>` : '<p class="err">No Wi-Fi network address found.</p>'}
       <ol>
-        <li>Scan the code with the phone's camera.</li>
-        <li>Follow the setup page to install the certificate (one time).</li>
-        <li>Open the secure app and tap <b>Pair</b>.</li>
+        <li><b>OmniClip app</b> (Android/iOS): tap <b>Scan QR code</b>. That's it.</li>
+        <li><b>No app?</b> Scan with the phone's camera and follow the setup page in the browser.</li>
       </ol>
       <p class="muted">Or enter this code on the device:</p>
       <div class="code">${esc(p.code)}</div>
+      ${host ? `<p class="muted">Hub address: <b class="sel">${esc(host)}</b></p>` : ''}
       <p class="muted">Each code works once and expires in ${minutes} min.</p>
       <p class="urls">${esc(p.setupUrl)}</p>
       <p class="urls">To join another Mac or Windows PC, run OmniClip on it and enter this code.</p>

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">OmniClip</string>
+    <string name="title_activity_main">OmniClip</string>
+    <string name="package_name">com.omniclip.app</string>
+    <string name="custom_url_scheme">com.omniclip.app</string>
+</resources>

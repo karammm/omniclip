@@ -1,8 +1,14 @@
 // Clipboard helpers that work in the secure (HTTPS) app and degrade gracefully in basic (HTTP) mode.
+// The native app uses the system clipboard through Capacitor instead.
+import { NATIVE } from './api';
 
-export const secure = window.isSecureContext;
-export const canReadClipboard = secure && !!navigator.clipboard?.read;
-export const canCopyImages = secure && typeof ClipboardItem !== 'undefined' && !!navigator.clipboard?.write;
+// inline MODE check so the browser build drops the native chunk entirely
+const native = () => (import.meta.env.MODE === 'native' ? import('./native') : Promise.reject(new Error('native only')));
+
+/** In the native app the hub is reached over the LAN, but the clipboard is the OS one, so it counts as secure. */
+export const secure = NATIVE || window.isSecureContext;
+export const canReadClipboard = NATIVE || (secure && !!navigator.clipboard?.read);
+export const canCopyImages = NATIVE || (secure && typeof ClipboardItem !== 'undefined' && !!navigator.clipboard?.write);
 
 function legacyCopy(text: string): boolean {
   const ta = document.createElement('textarea');
@@ -24,6 +30,14 @@ function legacyCopy(text: string): boolean {
 }
 
 export async function copyText(text: string): Promise<boolean> {
+  if (NATIVE) {
+    try {
+      await (await native()).writeText(text);
+      return true;
+    } catch {
+      return false;
+    }
+  }
   if (secure && navigator.clipboard?.writeText) {
     try {
       await navigator.clipboard.writeText(text);
@@ -50,6 +64,21 @@ async function toPng(blob: Blob): Promise<Blob> {
  * ClipboardItem is created immediately with a promise for the (fetched) image data.
  */
 export async function copyImage(url: string): Promise<boolean> {
+  if (NATIVE) {
+    try {
+      const blob = await (await fetch(url)).blob();
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(String(r.result));
+        r.onerror = () => reject(r.error);
+        r.readAsDataURL(blob);
+      });
+      await (await native()).writeImage(dataUrl);
+      return true;
+    } catch {
+      return false;
+    }
+  }
   if (!canCopyImages) return false;
   const png = fetch(url)
     .then((r) => r.blob())
@@ -65,6 +94,7 @@ export async function copyImage(url: string): Promise<boolean> {
 export type ClipboardContent = { kind: 'text'; text: string } | { kind: 'image'; blob: Blob } | null;
 
 export async function readClipboard(): Promise<ClipboardContent> {
+  if (NATIVE) return (await native()).read();
   if (!secure) return null;
   if (navigator.clipboard?.read) {
     const items = await navigator.clipboard.read();
