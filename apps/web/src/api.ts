@@ -1,4 +1,4 @@
-import { HUB_PORT_HTTP, type Clip, type Device, type PairResponse, type Platform } from '@omniclip/protocol';
+import { HUB_PORT_HTTP, HUB_PORT_TLS, type Clip, type Device, type PairResponse, type Platform } from '@omniclip/protocol';
 
 /** True in the Android/iOS app (a `vite build --mode native` bundle), false in the browser PWA. */
 export const NATIVE = import.meta.env.MODE === 'native';
@@ -8,8 +8,12 @@ export interface Session {
   deviceId: string;
   name: string;
   networkId: string;
-  /** Hub base URL. Only set in the native app; the PWA is served by the hub itself. */
+  /** Hub base URL (https://host:7878). Only set in the native app; the PWA is served by the hub itself. */
   hub?: string;
+  /** The network's CA, pinned by the native app for TLS to the hub. */
+  caPem?: string;
+  /** Desktop addresses seen on this network: where to look for the hub after a failover. */
+  candidates?: string[];
 }
 
 const KEY = 'omniclip.session';
@@ -102,11 +106,32 @@ export function wsUrl(token: string): string {
   return `${proto}//${location.host}${q}`;
 }
 
+export interface HubTarget {
+  host: string;
+  /** https://host:7878, used for everything once the CA is pinned */
+  hub: string;
+  /** http://host:7879, only for discovery and fetching the CA certificate */
+  http: string;
+  code?: string;
+  /** CA pin from the QR code (base64url SHA-256 of the certificate) */
+  ca?: string;
+}
+
+export function hubUrls(host: string): { hub: string; http: string } {
+  const h = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+  return { hub: `https://${h}:${HUB_PORT_TLS}`, http: `http://${h}:${HUB_PORT_HTTP}` };
+}
+
+export function hostOf(url: string): string {
+  return new URL(url).hostname.replace(/^\[|\]$/g, '');
+}
+
 /**
- * Turns what the user scanned or typed into a hub URL and (optional) pairing code.
- * Accepts the desktop's QR link (`http://192.168.1.5:7879/setup#pair=123456`), a URL, or a bare IP/hostname.
+ * Turns what the user scanned or typed into a hub target.
+ * Accepts the desktop's QR link (`http://192.168.1.5:7879/setup#pair=123456&ca=…`), an omniclip:// link,
+ * any URL, or a bare IP/hostname.
  */
-export function parseHubInput(input: string): { hub: string; code?: string } | null {
+export function parseHubInput(input: string): HubTarget | null {
   const text = input.trim();
   if (!text) return null;
   let url: URL;
@@ -117,22 +142,42 @@ export function parseHubInput(input: string): { hub: string; code?: string } | n
   }
   if (url.protocol === 'omniclip:') {
     const hub = url.searchParams.get('hub');
-    return hub ? parseHubInput(`${hub}${url.searchParams.get('code') ? `#pair=${url.searchParams.get('code')}` : ''}`) : null;
+    if (!hub) return null;
+    const target = parseHubInput(hub);
+    if (!target) return null;
+    return { ...target, code: url.searchParams.get('code') ?? undefined, ca: url.searchParams.get('ca') ?? undefined };
   }
   if (!url.hostname) return null;
-  const code = /pair=(\d{4,16})/.exec(url.hash + url.search)?.[1];
-  // the app always uses the hub's plain-HTTP port; the HTTPS port only exists for browsers
-  return { hub: `http://${url.hostname}:${HUB_PORT_HTTP}`, code };
+  const params = new URLSearchParams(url.hash.slice(1) || url.search.slice(1));
+  const code = /^\d{4,16}$/.test(params.get('pair') ?? '') ? params.get('pair')! : undefined;
+  const host = hostOf(url.href);
+  return { host, ...hubUrls(host), code, ca: params.get('ca') ?? undefined };
 }
 
-export async function checkHub(hub: string): Promise<boolean> {
+/** Returns the network ID of the hub answering at this plain-HTTP base, or null. */
+export async function probeHub(http: string, timeoutMs = 4000): Promise<string | null> {
   try {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 4000);
-    const res = await fetch(`${hub}/api/info`, { signal: ctrl.signal });
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    const res = await fetch(`${http}/api/info`, { signal: ctrl.signal });
     clearTimeout(timer);
-    return res.ok && ((await res.json()) as { app?: string }).app === 'omniclip';
+    const info = (await res.json()) as { app?: string; networkId?: string };
+    return res.ok && info.app === 'omniclip' ? (info.networkId ?? null) : null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+export async function fetchCaPem(http: string): Promise<string> {
+  const res = await fetch(`${http}/ca.crt`);
+  if (!res.ok) throw new Error(`could not fetch the hub certificate (${res.status})`);
+  return res.text();
+}
+
+/** base64url SHA-256 of the certificate's DER bytes; matches the hub's `caPin`. */
+export async function pinOf(pem: string): Promise<string> {
+  const b64 = pem.replace(/-----(BEGIN|END) CERTIFICATE-----/g, '').replace(/\s+/g, '');
+  const der = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', der));
+  return btoa(String.fromCharCode(...digest)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }

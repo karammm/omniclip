@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { isNewer } from '../src/version.js';
 import type { DiscoveredHub } from '@omniclip/hub';
 import { EchoGuard } from '../src/echoGuard.js';
 import { decideRole, shouldStepDown } from '../src/election.js';
@@ -54,5 +55,14 @@ describe('EchoGuard', () => {
     g.markApplied('t:remote');
     expect(g.isLocalChange('t:remote')).toBe(false);
     expect(g.isLocalChange('t:local')).toBe(true);
+  });
+});
+
+describe('isNewer', () => {
+  it('compares versions numerically', () => {
+    expect(isNewer('v0.10.0', '0.9.2')).toBe(true);
+    expect(isNewer('0.3.0', '0.3.0')).toBe(false);
+    expect(isNewer('0.2.9', '0.3.0')).toBe(false);
+    expect(isNewer('1.0', '0.99.99')).toBe(true);
   });
 });

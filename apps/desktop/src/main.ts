@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { BrowserWindow, ClipboardItem, Menu, Notification, Tray, app, clipboard, dialog, ipcMain, nativeImage, shell, type MenuItemConstructorOptions } from 'electron';
 import QRCode from 'qrcode';
 import { MAX_TEXT_BYTES, MAX_UPLOAD_BYTES, type Clip, type Device, type Platform } from '@omniclip/protocol';
@@ -11,9 +12,13 @@ import { ConfigStore, type Credential } from './config.js';
 import { EchoGuard } from './echoGuard.js';
 import { decideRole, shouldStepDown } from './election.js';
 import { renderPairPage } from './pairPage.js';
+import { Updater } from './updates.js';
 
 const PLATFORM: Platform = process.platform === 'darwin' ? 'mac' : process.platform === 'win32' ? 'windows' : 'linux';
 const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
+// files copied in Finder/Explorer are sent automatically up to these limits; bigger sets need "Send file…"
+const AUTO_FILES_MAX = 20;
+const AUTO_FILES_MAX_BYTES = 100 * 1024 * 1024;
 const TAKEOVER_AFTER_MS = 10_000;
 
 if (!app.requestSingleInstanceLock()) app.quit();
@@ -24,6 +29,7 @@ const webDir = app.isPackaged ? path.join(process.resourcesPath, 'web') : path.j
 const userData = app.getPath('userData');
 const cfg = new ConfigStore(userData, os.hostname().replace(/\.local$/, ''));
 const guard = new EchoGuard();
+const updater = new Updater(log);
 
 type Role = 'searching' | 'hub' | 'client' | 'unpaired' | 'error';
 
@@ -198,7 +204,11 @@ function sha(data: string | Buffer): string {
   return crypto.createHash('sha256').update(data).digest('hex');
 }
 
-type Snapshot = { fp: string; kind: 'text'; text: string } | { fp: string; kind: 'image'; png: Buffer } | null;
+type Snapshot =
+  | { fp: string; kind: 'text'; text: string }
+  | { fp: string; kind: 'image'; png: Buffer }
+  | { fp: string; kind: 'files'; paths: string[] }
+  | null;
 
 let lastImageCheck = 0;
 
@@ -211,7 +221,32 @@ async function readPng(): Promise<Buffer | null> {
   return null;
 }
 
+/** Files copied in Finder or Explorer show up as file:// entries in text/uri-list. */
+async function readFilePaths(): Promise<string[]> {
+  if (!(await clipboard.has('text/uri-list'))) return [];
+  for (const item of await clipboard.read()) {
+    if (!item.types.includes('text/uri-list')) continue;
+    const list = await ((await item.getType('text/uri-list')) as Blob).text();
+    return list
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter((l) => l.startsWith('file:'))
+      .map((l) => {
+        try {
+          return fileURLToPath(l);
+        } catch {
+          return '';
+        }
+      })
+      .filter(Boolean);
+  }
+  return [];
+}
+
 async function snapshot(forceImage = false): Promise<Snapshot> {
+  // before text: Finder also puts the file's name on the clipboard as plain text
+  const paths = await readFilePaths();
+  if (paths.length) return { fp: `f:${sha(paths.join('\n'))}`, kind: 'files', paths };
   const text = await clipboard.readText();
   if (text) return { fp: `t:${sha(text)}`, kind: 'text', text };
   // reading images is costly; check at most every 1.5s
@@ -237,9 +272,10 @@ async function exclusive<T>(fn: () => Promise<T>): Promise<T | undefined> {
 async function watchTick(): Promise<void> {
   const client = state.client;
   if (!client || client.status !== 'online' || cfg.data.paused) return;
-  await exclusive(async () => {
+  const files = await exclusive(async () => {
     const snap = await snapshot();
     if (!snap || !guard.isLocalChange(snap.fp)) return;
+    if (snap.kind === 'files') return snap.paths; // uploaded outside the lock below
     try {
       if (snap.kind === 'text') {
         if (Buffer.byteLength(snap.text) <= MAX_TEXT_BYTES) await client.sendText(snap.text);
@@ -251,6 +287,25 @@ async function watchTick(): Promise<void> {
       log(`send failed: ${String(err)}`);
     }
   });
+  if (files) await sendCopiedFiles(files);
+}
+
+async function sendCopiedFiles(paths: string[]): Promise<void> {
+  const stats = paths.map((p) => {
+    try {
+      return { p, stat: fs.statSync(p) };
+    } catch {
+      return null;
+    }
+  });
+  const files = stats.filter((s): s is { p: string; stat: fs.Stats } => !!s?.stat.isFile());
+  if (!files.length) return; // only folders were copied
+  const total = files.reduce((n, f) => n + f.stat.size, 0);
+  if (files.length > AUTO_FILES_MAX || total > AUTO_FILES_MAX_BYTES) {
+    notify('OmniClip', `${files.length} files (${Math.round(total / 1048576)} MB) are too many to send automatically. Use "Send file…" in the OmniClip menu.`);
+    return;
+  }
+  await sendPaths(files.map((f) => f.p));
 }
 
 function uniquePath(dir: string, name: string): string {
@@ -329,7 +384,7 @@ async function pairPageHtml(): Promise<string> {
   if (state.role === 'hub' && state.hub) {
     const { code, expiresAt } = state.hub.getPairingCode();
     const httpUrl = state.hub.urls().http[0];
-    const setupUrl = httpUrl ? `${httpUrl}/setup#pair=${code}` : '';
+    const setupUrl = httpUrl ? `${httpUrl}/setup#pair=${code}&ca=${state.hub.caPin}` : '';
     const qr = setupUrl ? await QRCode.toDataURL(setupUrl, { margin: 1, width: 280 }) : '';
     return renderPairPage({ mode: 'hub', code, expiresAt, setupUrl, qr, urls: state.hub.urls().tls });
   }
@@ -424,8 +479,10 @@ function updateTray(): void {
     };
   });
 
+  const update = updater.available;
   const template: MenuItemConstructorOptions[] = [
     { label: stateLabel(), enabled: false },
+    ...(update ? [{ label: update.ready ? `Restart to update to ${update.version}` : `Update available: ${update.version}…`, click: () => updater.install() }] : []),
     { type: 'separator' },
   ];
   if (state.role === 'hub') template.push({ label: 'Pair a phone or tablet…', click: () => void openPairWindow() });
@@ -465,6 +522,15 @@ function updateTray(): void {
       checked: app.getLoginItemSettings().openAtLogin,
       click: (item) => app.setLoginItemSettings({ openAtLogin: item.checked }),
     },
+    {
+      label: 'Check for updates',
+      enabled: app.isPackaged,
+      click: async () => {
+        const found = await updater.check();
+        if (!found) notify('OmniClip', `You're on the latest version (${app.getVersion()}).`);
+      },
+    },
+    { label: `Version ${app.getVersion()}`, enabled: false },
     { type: 'separator' },
     { label: 'Quit OmniClip', role: 'quit' },
   );
@@ -503,6 +569,15 @@ app.on('window-all-closed', () => {
 app.whenReady().then(async () => {
   app.dock?.hide();
   createTray();
+  updater.on('available', (u) => {
+    updateTray();
+    notify(
+      'OmniClip update',
+      u.ready ? `Version ${u.version} is ready. Choose "Restart to update" in the OmniClip menu.` : `Version ${u.version} is available. Click to download.`,
+      () => updater.install(),
+    );
+  });
+  updater.start();
   guard.prime((await snapshot(true))?.fp ?? null);
   setInterval(() => void watchTick(), 500);
   await boot();

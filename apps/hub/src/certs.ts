@@ -127,3 +127,8 @@ export function ensureCerts(dir: string, ips: string[], dnsNames: string[], seed
 export function fingerprint(certPem: string): string {
   return new crypto.X509Certificate(certPem).fingerprint256;
 }
+
+/** SHA-256 of the certificate's DER bytes, base64url: compact enough for the pairing QR code. */
+export function pinFingerprint(certPem: string): string {
+  return crypto.createHash('sha256').update(new crypto.X509Certificate(certPem).raw).digest('base64url');
+}

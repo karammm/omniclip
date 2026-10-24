@@ -1,7 +1,7 @@
 {
   "name": "@omniclip/desktop",
   "productName": "OmniClip",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "license": "MIT",
   "private": true,
   "description": "One clipboard for every device on your Wi-Fi",
@@ -17,12 +17,13 @@
     "dist:win": "node build.mjs && electron-builder --win --publish never"
   },
   "devDependencies": {
-    "@omniclip/hub": "0.2.0",
-    "@omniclip/protocol": "0.2.0",
-    "qrcode": "^1.5.4",
-    "ws": "^8.22.0",
+    "@omniclip/hub": "0.3.0",
+    "@omniclip/protocol": "0.3.0",
     "electron": "45.0.0",
-    "electron-builder": "^26.0.0"
+    "electron-builder": "^26.0.0",
+    "electron-updater": "^6.8.11",
+    "qrcode": "^1.5.4",
+    "ws": "^8.22.0"
   },
   "build": {
     "appId": "com.omniclip.app",
@@ -109,7 +110,14 @@
       "createDesktopShortcut": true,
       "runAfterFinish": true,
       "artifactName": "OmniClip-${version}-${arch}.${ext}"
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "karammm",
+        "repo": "omniclip"
+      }
+    ]
   },
   "homepage": "https://github.com/karammm/omniclip"
 }

@@ -7,6 +7,9 @@ import android.content.Context;
 import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
+import android.net.http.SslCertificate;
+import android.os.Build;
+import android.os.Bundle;
 import android.provider.OpenableColumns;
 import android.util.Base64;
 import com.getcapacitor.JSArray;
@@ -16,15 +19,20 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import androidx.core.content.FileProvider;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Android-only helpers for the web layer:
+ * Native helpers for the web layer:
+ * - pins the OmniClip network's certificate authority for HTTPS/WebSocket connections to the hub
  * - holds what other apps shared to OmniClip ("Share → OmniClip") until it is taken
  * - copies images to the clipboard as real images (the Capacitor clipboard plugin pastes them as text)
  */
@@ -33,6 +41,45 @@ public class OmniClipPlugin extends Plugin {
 
     private static final long MAX_BYTES = 50L * 1024 * 1024;
     private static final List<JSObject> pending = new ArrayList<>();
+    private static volatile X509Certificate trustedCa;
+
+    @PluginMethod
+    public void trustCa(PluginCall call) {
+        String pem = call.getString("pem");
+        if (pem == null) {
+            call.reject("missing pem");
+            return;
+        }
+        try {
+            CertificateFactory cf = CertificateFactory.getInstance("X.509");
+            trustedCa = (X509Certificate) cf.generateCertificate(new ByteArrayInputStream(pem.getBytes(StandardCharsets.US_ASCII)));
+            call.resolve();
+        } catch (Exception e) {
+            call.reject("invalid certificate: " + e.getMessage());
+        }
+    }
+
+    /** True when the server certificate the WebView rejected was issued by the pinned OmniClip CA. */
+    static boolean isTrustedHubCertificate(SslCertificate cert) {
+        X509Certificate ca = trustedCa;
+        if (ca == null || cert == null) return false;
+        try {
+            X509Certificate leaf;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) leaf = cert.getX509Certificate();
+            else {
+                Bundle state = SslCertificate.saveState(cert);
+                byte[] der = state.getByteArray("x509-certificate");
+                if (der == null) return false;
+                leaf = (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(new ByteArrayInputStream(der));
+            }
+            if (leaf == null) return false;
+            leaf.checkValidity();
+            leaf.verify(ca.getPublicKey());
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
 
     static synchronized void collect(Context ctx, Intent intent) {
         if (intent == null) return;

@@ -5,7 +5,8 @@ import { wsUrl } from './api';
 export type Status = 'connecting' | 'online' | 'offline';
 
 /** Keeps a WebSocket to the hub open (reconnecting with backoff) and mirrors history + devices. */
-export function useHub(token: string | null, onRevoked: () => void) {
+/** `hub` is only a dependency: when the native app moves to a new hub address, the socket reconnects there. */
+export function useHub(token: string | null, onRevoked: () => void, hub?: string) {
   const [status, setStatus] = useState<Status>('connecting');
   const [clips, setClips] = useState<Clip[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
@@ -81,7 +82,7 @@ export function useHub(token: string | null, onRevoked: () => void) {
       document.removeEventListener('visibilitychange', onVisible);
       wsRef.current?.close();
     };
-  }, [token]);
+  }, [token, hub]);
 
   return { status, clips, devices };
 }

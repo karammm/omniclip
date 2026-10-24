@@ -3,13 +3,17 @@ import type { Clip, Device } from '@omniclip/protocol';
 import {
   ApiError,
   blobUrl,
-  checkHub,
   defaultDeviceName,
   detectPlatform,
+  fetchCaPem,
+  hostOf,
+  hubUrls,
   loadSession,
   NATIVE,
   pair,
   parseHubInput,
+  pinOf,
+  probeHub,
   saveSession,
   sendFile,
   sendText,
@@ -17,6 +21,7 @@ import {
   type Session,
 } from './api';
 import { canCopyImages, canReadClipboard, copyImage, copyText, readClipboard, secure } from './clipboard';
+import { findHub } from './discovery';
 import { Setup } from './Setup';
 import { useHub, type Status } from './useHub';
 
@@ -41,20 +46,84 @@ function useToast(): [string | null, (msg: string) => void] {
   ];
 }
 
+/**
+ * Native app start-up: pin the network's CA before any request to the hub. Sessions from v0.2
+ * talked plain HTTP; they fetch the CA once (trust on first use) and move to HTTPS.
+ */
+async function prepareNativeSession(s: Session): Promise<Session> {
+  let next = s;
+  if (s.hub?.startsWith('http:') || !s.caPem) {
+    const host = hostOf(s.hub!);
+    next = { ...s, hub: hubUrls(host).hub, caPem: await fetchCaPem(hubUrls(host).http) };
+    saveSession(next);
+  }
+  await (await native()).trustCa(next.caPem!);
+  return next;
+}
+
 export function App() {
   const [session, setSession] = useState<Session | null>(loadSession);
+  const [ready, setReady] = useState(!NATIVE || !session);
+  const [startError, setStartError] = useState('');
   const [toast, showToast] = useToast();
   const path = location.pathname;
+
+  useEffect(() => {
+    if (ready || !session) return;
+    let cancelled = false;
+    const attempt = () =>
+      prepareNativeSession(session)
+        .then((s) => {
+          if (cancelled) return;
+          setSession(s);
+          setReady(true);
+        })
+        .catch((err) => {
+          // the hub is unreachable (offline, or v0.2 session upgrading); keep trying
+          setStartError(err instanceof Error ? err.message : String(err));
+          if (!cancelled) window.setTimeout(attempt, 3000);
+        });
+    attempt();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const signOut = () => {
     saveSession(null);
     setSession(null);
   };
 
+  const updateSession = (s: Session) => {
+    saveSession(s);
+    setSession(s);
+  };
+
   let page;
   if (!NATIVE && path.startsWith('/setup')) page = <Setup session={session} />;
-  else if (!session) page = NATIVE ? <NativePairScreen onPaired={setSession} /> : <PairScreen onPaired={setSession} />;
-  else page = <Main session={session} onRevoked={signOut} toast={showToast} />;
+  else if (!session)
+    page = NATIVE ? (
+      <NativePairScreen
+        onPaired={(s) => {
+          setSession(s);
+          setReady(true);
+        }}
+      />
+    ) : (
+      <PairScreen onPaired={setSession} />
+    );
+  else if (!ready)
+    page = (
+      <main class="center">
+        <img src="/icons/icon-192.png" alt="" width={72} height={72} />
+        <p class="muted">Connecting to your OmniClip hub…</p>
+        {startError && <p class="muted small">Still trying: {startError}</p>}
+        <button class="ghost" onClick={signOut}>
+          Pair with a different hub
+        </button>
+      </main>
+    );
+  else page = <Main session={session} onRevoked={signOut} onSession={updateSession} toast={showToast} />;
 
   return (
     <>
@@ -129,11 +198,17 @@ function NativePairScreen({ onPaired }: { onPaired: (s: Session) => void }) {
     try {
       const target = parseHubInput(hubInput);
       if (!target) throw new Error('Enter the hub address shown in the OmniClip window, for example 192.168.1.5');
-      if (!(await checkHub(target.hub))) throw new Error(`No OmniClip hub at ${new URL(target.hub).hostname}. Is this phone on the same Wi-Fi?`);
+      if (!(await probeHub(target.http))) throw new Error(`No OmniClip hub at ${target.host}. Is this phone on the same Wi-Fi?`);
+      // Pin the network's CA. With a QR code it must match the pin in the code; typed addresses trust it on first use.
+      const caPem = await fetchCaPem(target.http);
+      if (target.ca && (await pinOf(caPem)) !== target.ca) {
+        throw new Error("Security check failed: this hub's certificate doesn't match the QR code. Make sure you're on your own Wi-Fi.");
+      }
+      await (await native()).trustCa(caPem);
       setHubBase(target.hub);
       const deviceName = name.trim() || defaultDeviceName(platform);
       const res = await pair((target.code ?? pairCode).trim(), deviceName, platform);
-      const s: Session = { token: res.token, deviceId: res.deviceId, networkId: res.networkId, name: deviceName, hub: target.hub };
+      const s: Session = { token: res.token, deviceId: res.deviceId, networkId: res.networkId, name: deviceName, hub: target.hub, caPem };
       saveSession(s);
       onPaired(s);
     } catch (err) {
@@ -152,7 +227,7 @@ function NativePairScreen({ onPaired }: { onPaired: (s: Session) => void }) {
         n.pairLinks((url) => {
           const target = parseHubInput(url);
           if (!target?.code) return;
-          setHub(new URL(target.hub).hostname);
+          setHub(target.host);
           setCode(target.code);
           void connect(url, target.code);
         }),
@@ -171,7 +246,7 @@ function NativePairScreen({ onPaired }: { onPaired: (s: Session) => void }) {
       if (!text) return;
       const target = parseHubInput(text);
       if (!target) return setError('That QR code is not from OmniClip.');
-      setHub(new URL(target.hub).hostname);
+      setHub(target.host);
       if (target.code) {
         setCode(target.code);
         await connect(text, target.code);
@@ -241,8 +316,56 @@ function fingerprint(c: NonNullable<Awaited<ReturnType<typeof readClipboard>>>):
   return c.kind === 'text' ? `t:${c.text.length}:${c.text.slice(0, 256)}` : `i:${c.blob.size}:${c.blob.type}`;
 }
 
-function Main({ session, onRevoked, toast }: { session: Session; onRevoked: () => void; toast: (m: string) => void }) {
-  const { status, clips, devices } = useHub(session.token, onRevoked);
+function Main({
+  session,
+  onRevoked,
+  onSession,
+  toast,
+}: {
+  session: Session;
+  onRevoked: () => void;
+  onSession: (s: Session) => void;
+  toast: (m: string) => void;
+}) {
+  const { status, clips, devices } = useHub(session.token, onRevoked, session.hub);
+  const [searching, setSearching] = useState(false);
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+
+  // Native app: remember where the desktops are, so the hub can be found again after a failover
+  useEffect(() => {
+    if (!NATIVE) return;
+    const seen = devices.flatMap((d) => (d.online ? (d.addresses ?? []) : []));
+    if (!seen.length) return;
+    const s = sessionRef.current;
+    const merged = [...new Set([...seen, ...(s.candidates ?? [])])].slice(0, 12);
+    if (merged.join() !== (s.candidates ?? []).join()) onSession({ ...s, candidates: merged });
+  }, [devices]);
+
+  // Native app: if the hub stays unreachable, look for it at the other desktops and on the subnet
+  useEffect(() => {
+    if (!NATIVE || status === 'online' || !session.hub) return;
+    let cancelled = false;
+    let timer: number;
+    const search = async () => {
+      setSearching(true);
+      const s = sessionRef.current;
+      const current = hostOf(s.hub!);
+      const host = await findHub(s.networkId, current, s.candidates ?? [], () => cancelled);
+      if (cancelled) return;
+      setSearching(false);
+      if (host && host !== current) {
+        onSession({ ...s, hub: hubUrls(host).hub });
+        toast('Reconnected to the new OmniClip hub');
+      } else timer = window.setTimeout(search, 15_000);
+    };
+    timer = window.setTimeout(search, 8_000);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      setSearching(false);
+    };
+  }, [status, session.hub]);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -380,7 +503,7 @@ function Main({ session, onRevoked, toast }: { session: Session; onRevoked: () =
       <header class="bar">
         <img src="/icons/icon-192.png" alt="" width={28} height={28} />
         <strong>OmniClip</strong>
-        <StatusPill status={status} />
+        <StatusPill status={status} searching={searching} />
         {NATIVE ? (
           <button class="ghost" aria-label="Settings" onClick={() => setSettingsOpen(!settingsOpen)}>
             ⚙︎
@@ -440,8 +563,8 @@ function Main({ session, onRevoked, toast }: { session: Session; onRevoked: () =
   );
 }
 
-function StatusPill({ status }: { status: Status }) {
-  const label = { online: 'Connected', connecting: 'Connecting…', offline: 'Offline' }[status];
+function StatusPill({ status, searching }: { status: Status; searching?: boolean }) {
+  const label = searching && status !== 'online' ? 'Looking for hub…' : { online: 'Connected', connecting: 'Connecting…', offline: 'Offline' }[status];
   return <span class={`pill ${status}`}>{label}</span>;
 }
 

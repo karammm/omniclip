@@ -27,7 +27,7 @@ import {
   type Registry,
   type ServerMessage,
 } from '@omniclip/protocol';
-import { ensureCerts, type KeyPair } from './certs.js';
+import { ensureCerts, pinFingerprint, type KeyPair } from './certs.js';
 import { lanAddresses } from './net.js';
 import { Store, hashToken } from './store.js';
 
@@ -63,6 +63,8 @@ export class Hub extends EventEmitter {
   private rotateTimer?: NodeJS.Timeout;
   private ips: string[] = [];
   localDeviceId = '';
+  /** Where each connected desktop reached us from; any of them may become the next hub. */
+  private peerAddresses = new Map<string, string[]>();
 
   constructor(opts: HubOptions) {
     super();
@@ -81,6 +83,11 @@ export class Hub extends EventEmitter {
 
   get networkId(): string {
     return this.store.networkId;
+  }
+
+  /** Pin for the network's CA, carried in the pairing QR so the phone apps can trust it. */
+  get caPin(): string {
+    return pinFingerprint(this.ca.certPem);
   }
 
   get caPem(): string {
@@ -156,7 +163,11 @@ export class Hub extends EventEmitter {
   }
 
   listDevices(): Device[] {
-    return this.store.devices().map(({ tokenHash: _t, ...d }) => ({ ...d, online: (this.sockets.get(d.id)?.size ?? 0) > 0 }));
+    return this.store.devices().map(({ tokenHash: _t, ...d }) => {
+      const online = (this.sockets.get(d.id)?.size ?? 0) > 0;
+      const addresses = d.id === this.localDeviceId ? this.ips : this.peerAddresses.get(d.id);
+      return { ...d, online, ...(online && addresses?.length ? { addresses } : {}) };
+    });
   }
 
   revokeDevice(id: string): boolean {
@@ -285,7 +296,7 @@ export class Hub extends EventEmitter {
 
     app.addHook('onSend', async (req, reply) => {
       // allow the Apple Shortcut / other origins to call the API with a bearer token
-      if (req.url.startsWith('/api/')) {
+      if (req.url.startsWith('/api/') || req.url === '/ca.crt') {
         reply.header('Access-Control-Allow-Origin', '*');
         reply.header('Access-Control-Allow-Headers', 'Authorization, Content-Type');
       }
@@ -385,6 +396,8 @@ export class Hub extends EventEmitter {
         if (!set) this.sockets.set(device.id, (set = new Set()));
         set.add(socket);
         this.store.touchDevice(device.id);
+        const remote = req.socket.remoteAddress?.replace(/^::ffff:/, '');
+        if (isDesktopPlatform(device.platform) && remote && remote !== '127.0.0.1' && remote !== '::1') this.peerAddresses.set(device.id, [remote]);
 
         this.send(socket, {
           type: 'hello',
@@ -404,7 +417,10 @@ export class Hub extends EventEmitter {
         });
         socket.on('close', () => {
           set!.delete(socket);
-          if (set!.size === 0) this.sockets.delete(device.id);
+          if (set!.size === 0) {
+            this.sockets.delete(device.id);
+            this.peerAddresses.delete(device.id);
+          }
           this.store.touchDevice(device.id);
           this.broadcast({ type: 'devices', devices: this.listDevices() });
           this.emit('devices', this.listDevices());

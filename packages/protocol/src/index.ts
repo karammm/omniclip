@@ -40,11 +40,13 @@ export const DeviceSchema = z.object({
   createdAt: z.number(),
   lastSeen: z.number(),
   online: z.boolean().optional(),
+  /** LAN addresses of online desktops: where phones look for a new hub after a failover. */
+  addresses: z.array(z.string()).optional(),
 });
 export type Device = z.infer<typeof DeviceSchema>;
 
 /** Device record as stored by the hub (and replicated to desktop peers for failover). */
-export const DeviceRecordSchema = DeviceSchema.omit({ online: true }).extend({
+export const DeviceRecordSchema = DeviceSchema.omit({ online: true, addresses: true }).extend({
   tokenHash: z.string(),
 });
 export type DeviceRecord = z.infer<typeof DeviceRecordSchema>;

@@ -82,13 +82,20 @@ export function onResume(fn: () => void): () => void {
 export type SharedItem = { kind: 'text'; text: string } | { kind: 'file'; name: string; mime: string; data: string };
 
 interface OmniClipPlugin {
+  trustCa(opts: { pem: string }): Promise<void>;
   take(): Promise<{ items: SharedItem[] }>;
   copyImage(opts: { data: string; mime: string }): Promise<void>;
   addListener(event: 'shared', fn: () => void): Promise<PluginListenerHandle>;
 }
 
-// Android only (see OmniClipPlugin.java): share inbox and image copying
+// App-local plugin (OmniClipPlugin.java / OmniClipPlugin.swift). trustCa works on both platforms;
+// the share inbox and image copy are Android only.
 const OmniClip = registerPlugin<OmniClipPlugin>('OmniClip');
+
+/** Pins the network's CA so HTTPS and WebSocket connections to the hub are accepted. */
+export async function trustCa(pem: string): Promise<void> {
+  await OmniClip.trustCa({ pem });
+}
 
 export async function takeShared(): Promise<SharedItem[]> {
   if (platform !== 'android') return [];

@@ -64,11 +64,13 @@ OmniClip connects **all** of your devices instead, and keeps your data **at home
 | 📷 **Pair by scanning a QR code** | Open the OmniClip app on your phone, tap **Scan QR code**, done. |
 | ⚡ **Auto-send on Android** | Copy something, open OmniClip, and it's already on your computer. |
 | 🖼️ **Text, links, images and files** | Images go straight onto the desktop clipboard. Files are saved to `Downloads/OmniClip`. |
+| 📁 **Copy files in Finder or Explorer** | Press ⌘C or Ctrl+C on files and they're sent to your other devices. |
+| ⬆️ **Automatic updates** | Windows installs updates in the background. Mac tells you when a new version is out. |
 | 🕘 **History** | Your last 200 clips. Click any of them to copy it again. |
 | 📤 **Share sheet integration** | Android: **Share → OmniClip** from any app. iOS: a one-tap Shortcut, including Back Tap. |
 | 🧭 **Zero configuration** | Computers find each other automatically over mDNS (Bonjour). |
-| 🛟 **Automatic failover** | If the hub computer shuts down, another desktop takes over within about 10 seconds. |
-| 🔐 **Private by design** | Pairing codes, a token per device, TLS encryption, and per-device revocation. |
+| 🛟 **Automatic failover** | If the hub computer shuts down, another desktop takes over within about 10 seconds, and phones find it on their own. |
+| 🔐 **Private by design** | Pairing codes, a token per device, encryption with a certificate pinned from the QR code, and per-device revocation. |
 
 ## Supported devices
 
@@ -179,7 +181,9 @@ Launch OmniClip on the second computer. It finds the hub on your network and sho
 
 ### On a Mac or Windows PC
 
-Just copy and paste. The tray menu also gives you:
+Just copy and paste. That includes files: select them in Finder or Explorer and press ⌘C or Ctrl+C. Up to 20 files and 100 MB are sent automatically; for bigger sets use **Send file…**. Folders are skipped.
+
+The tray menu also gives you:
 
 | Menu item | What it does |
 | --- | --- |
@@ -189,6 +193,7 @@ Just copy and paste. The tray menu also gives you:
 | **Devices** | Every paired device and whether it's online. Choose **Remove** to revoke one. |
 | **Pause syncing** | Temporarily stops sending and receiving. |
 | **Open at login** | Starts OmniClip automatically. |
+| **Check for updates** | Looks for a new version now. OmniClip also checks every 6 hours. |
 
 Files received from other devices are saved to `~/Downloads/OmniClip` (Windows: `Downloads\OmniClip`), and a notification appears.
 
@@ -198,6 +203,7 @@ Files received from other devices are saved to `~/Downloads/OmniClip` (Windows: 
 - **Send photo or file** opens the picker.
 - **Type or paste here** sends text you type.
 - Every clip in **Recent** has a **Copy** button. Images and files also have **Save / Share** (app) or **Download** and **Share** (web app).
+- **If the hub computer goes away**, the app shows **Looking for hub…**. It checks the other desktops and your local network, then reconnects to whichever computer took over.
 - **Android app:** copy something in any app, then open OmniClip, and it's sent automatically. You can also use **Share → OmniClip** from any app, for text, photos or files.
 - **iPhone app:** turn on automatic sending in **⚙︎ Settings** in the app. To stop iOS asking each time, go to **Settings → Apps → OmniClip → Paste from Other Apps → Allow**.
 
@@ -233,7 +239,7 @@ flowchart TB
         App["iPhone / iPad / Android<br/>OmniClip app"]
         Phone["Any phone or browser<br/>web app (PWA)"]
         PC2 <--> |"WSS, found via mDNS"| Hub
-        App <--> |"HTTP + WS on the LAN, paired by QR"| Hub
+        App <--> |"HTTPS + WSS, CA pinned from the QR code"| Hub
         Phone <--> |"HTTPS + WSS, paired by QR"| Hub
     end
 ```
@@ -296,8 +302,8 @@ stateDiagram-v2
 - **Per-device tokens.** Each paired device gets its own random token. The hub only stores a SHA-256 hash of it. Remove a device from **Devices** and it's disconnected immediately.
 - **Encryption.** All secure-mode traffic uses TLS. Each OmniClip network generates its own private certificate authority. Its server certificate covers the hub's LAN addresses and is valid for at most 397 days, so Apple devices accept it.
 - **Desktops verify the hub.** After pairing, desktops pin the network's certificate authority and reject any other server.
-- **The phone apps** talk to the hub over plain HTTP on port 7879. That's why they don't need the certificate install, but it also means their traffic is protected only by your Wi-Fi encryption (WPA2/WPA3), not by TLS. Every request still needs the device's token. Encrypted connections for the apps are on the [roadmap](#roadmap). Until then, avoid public or shared Wi-Fi.
-- **Basic mode** in the web app also uses plain HTTP on port 7879, with the same caveat.
+- **The phone apps pin the hub's certificate.** The pairing QR code contains a fingerprint of your network's certificate authority. The app checks the hub's certificate against it before pairing, and from then on trusts only that authority, for every request and the live connection. That's why the apps don't need the certificate install. A typed-in hub address (no QR code) trusts the hub the first time it connects.
+- **Basic mode** in the web app uses plain HTTP on port 7879. It isn't encrypted, so use it only on networks you trust. Port 7879 also serves the setup page, `/api/info` and the CA certificate, all of which are public.
 
 > [!IMPORTANT]
 > Anything you copy on a synced desktop is sent to your other devices, passwords included. Use **Pause syncing** before copying something you don't want shared.
@@ -491,21 +497,22 @@ That's expected in v0.1. Use **Send file…** or drag the file onto the menu-bar
 ## Known limitations
 
 - **iOS needs a tap** to send and to copy. Apple doesn't allow background clipboard access. That's an iOS rule, not an OmniClip choice.
-- **Phones after a failover** must pair with the new hub, which means rescanning its QR code. Desktops move over automatically.
-- **The phone apps use HTTP on your LAN**, not TLS (see [Security](#security-and-privacy)).
+- **The web app after a failover** has to be opened at the new hub's address. The phone apps and desktops move over automatically.
 - **The iPhone app** needs re-signing every 7 days with a free Apple ID, and it isn't on the App Store.
 - **Wi-Fi/LAN only.** There's no Bluetooth or internet relay yet.
-- **Files copied in Finder or Explorer** aren't detected automatically. Use **Send file…**.
+- **Copied folders** aren't sent. Zip them first, or send the files inside.
+- **Automatic updates on Mac** only notify you. Installing silently needs a signed app.
 - **Unsigned installers.** Each platform shows a warning the first time (see [Install](#install)).
 
 ## Roadmap
 
 - [x] Mac, Windows, Android and iOS apps, built automatically on every release
-- [ ] Signed and notarized installers, with auto-update
-- [ ] TLS with certificate pinning in the phone apps
+- [ ] Signed and notarized installers (silent updates on Mac too)
 - [ ] App Store and Google Play listings
-- [ ] Phones that follow the hub automatically after a failover
-- [ ] Automatic sync of files copied in Finder and Explorer
+- [x] Phones that follow the hub automatically after a failover
+- [x] Automatic sync of files copied in Finder and Explorer
+- [x] TLS with certificate pinning in the phone apps
+- [x] Automatic updates (Windows), update notifications (Mac)
 - [ ] Linux desktop build
 - [ ] End-to-end encryption of stored history
 - [ ] Optional Bluetooth for nearby devices without Wi-Fi

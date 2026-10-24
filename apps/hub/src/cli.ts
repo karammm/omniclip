@@ -18,7 +18,7 @@ async function printPairing(): Promise<void> {
   const httpUrl = hub.urls().http[0];
   console.log(`\nPairing code: ${code}`);
   if (httpUrl) {
-    const url = `${httpUrl}/setup#pair=${code}`;
+    const url = `${httpUrl}/setup#pair=${code}&ca=${hub.caPin}`;
     console.log(`Scan to pair a phone: ${url}`);
     console.log(await QRCode.toString(url, { type: 'terminal', small: true }));
   }
