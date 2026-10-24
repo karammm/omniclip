@@ -15,6 +15,7 @@ Drop a file on the Mac and pick it up on the iPad. No cloud, no account, no app 
 ![Electron](https://img.shields.io/badge/Electron-45-47848f?logo=electron&logoColor=white)
 ![Local only](https://img.shields.io/badge/data-stays%20on%20your%20LAN-16a34a)
 ![Status](https://img.shields.io/badge/status-v0.1%20preview-orange)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 <img src="docs/demo.gif" alt="OmniClip demo: text and an image copied on one device appear instantly on two phones" width="720">
 
@@ -41,6 +42,7 @@ Drop a file on the Mac and pick it up on the iPad. No cloud, no account, no app 
 - [Known limitations](#known-limitations)
 - [Roadmap](#roadmap)
 - [Contributing](#contributing)
+- [License](#license)
 
 ## Why OmniClip
 
@@ -404,6 +406,12 @@ Issues and pull requests are welcome.
 2. Make your change and add tests where it makes sense.
 3. Run `npm run typecheck && npm test && npm run test:e2e`.
 4. Open a pull request that describes what you changed and how you tested it.
+
+By contributing, you agree that your contributions are licensed under the MIT License.
+
+## License
+
+OmniClip is released under the [MIT License](LICENSE). You are free to use, copy, modify, merge, publish, distribute, sublicense and sell copies of it, as long as the copyright and license notice are kept. The software comes with no warranty.
 
 ---
 

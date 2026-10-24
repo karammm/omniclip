@@ -2,6 +2,7 @@
   "name": "@omniclip/desktop",
   "productName": "OmniClip",
   "version": "0.1.0",
+  "license": "MIT",
   "private": true,
   "description": "One clipboard for every device on your Wi-Fi",
   "author": "OmniClip",
