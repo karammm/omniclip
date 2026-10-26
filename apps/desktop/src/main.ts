@@ -1,3 +1,4 @@
+import { execFile, execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -12,7 +13,21 @@ import { ConfigStore, type Credential } from './config.js';
 import { EchoGuard } from './echoGuard.js';
 import { decideRole, shouldStepDown } from './election.js';
 import { renderPairPage } from './pairPage.js';
+import { renderSettingsPage } from './settingsPage.js';
 import { Updater } from './updates.js';
+
+/** "Karam's MacBook Pro" on a Mac (the name set in System Settings), the hostname elsewhere. */
+function computerName(): string {
+  if (process.platform === 'darwin') {
+    try {
+      const name = execFileSync('scutil', ['--get', 'ComputerName'], { encoding: 'utf8', timeout: 2000 }).trim();
+      if (name) return name;
+    } catch {
+      // fall back to the hostname
+    }
+  }
+  return os.hostname().replace(/\.local$/, '');
+}
 
 const PLATFORM: Platform = process.platform === 'darwin' ? 'mac' : process.platform === 'win32' ? 'windows' : 'linux';
 const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
@@ -27,7 +42,7 @@ if (process.platform === 'win32') app.setAppUserModelId('com.omniclip.app');
 const assetsDir = app.isPackaged ? path.join(process.resourcesPath, 'assets') : path.join(__dirname, '../assets');
 const webDir = app.isPackaged ? path.join(process.resourcesPath, 'web') : path.join(__dirname, '../../web/dist');
 const userData = app.getPath('userData');
-const cfg = new ConfigStore(userData, os.hostname().replace(/\.local$/, ''));
+const cfg = new ConfigStore(userData, computerName());
 const guard = new EchoGuard();
 const updater = new Updater(log);
 
@@ -46,10 +61,13 @@ const state = {
   deviceId: '',
   devices: [] as Device[],
   recent: [] as Clip[],
+  pinned: [] as Clip[],
+  hubDeviceId: '',
 };
 
 let tray: Tray | null = null;
 let pairWin: BrowserWindow | null = null;
+let settingsWin: BrowserWindow | null = null;
 let watchdog: NodeJS.Timeout | undefined;
 let booting = false;
 
@@ -169,16 +187,32 @@ function attachClient(addr: HubAddress, cred: Credential, networkId: string): vo
   state.client = client;
   state.networkId = networkId;
   state.deviceId = cred.deviceId;
-  client.on('status', () => updateTray());
-  client.on('hello', ({ deviceId, history, devices }) => {
+  client.on('status', () => {
+    updateTray();
+    settingsChanged();
+  });
+  client.on('hello', ({ deviceId, hubDeviceId, history, pinned, devices }) => {
     state.deviceId = deviceId;
+    state.hubDeviceId = hubDeviceId;
     state.devices = devices;
     state.recent = history;
+    state.pinned = pinned;
     updateTray();
+    settingsChanged();
+    // keep the name other devices see in sync with this computer's setting
+    const me = devices.find((d) => d.id === deviceId);
+    if (me && me.name !== cfg.data.deviceName) client.rename(cfg.data.deviceName).catch((err) => log(`rename failed: ${String(err)}`));
+  });
+  client.on('clipUpdate', (clip) => {
+    state.recent = state.recent.map((c) => (c.id === clip.id ? clip : c));
+    state.pinned = clip.pinned ? [clip, ...state.pinned.filter((c) => c.id !== clip.id)] : state.pinned.filter((c) => c.id !== clip.id);
+    updateTray();
+    settingsChanged();
   });
   client.on('devices', (devices) => {
     state.devices = devices;
     updateTray();
+    settingsChanged();
   });
   client.on('registry', (registry) => {
     cfg.data.registry = registry;
@@ -187,6 +221,7 @@ function attachClient(addr: HubAddress, cred: Credential, networkId: string): vo
   client.on('clip', (clip) => {
     state.recent = [clip, ...state.recent.filter((c) => c.id !== clip.id)].slice(0, 50);
     updateTray();
+    settingsChanged();
     if (!cfg.data.paused && clip.sourceDeviceId !== state.deviceId) void applyClip(clip, true);
   });
   client.on('revoked', () => {
@@ -247,6 +282,7 @@ async function snapshot(forceImage = false): Promise<Snapshot> {
   // before text: Finder also puts the file's name on the clipboard as plain text
   const paths = await readFilePaths();
   if (paths.length) return { fp: `f:${sha(paths.join('\n'))}`, kind: 'files', paths };
+  // (checked before text even when file sending is off, so a file's name is never sent as text)
   const text = await clipboard.readText();
   if (text) return { fp: `t:${sha(text)}`, kind: 'text', text };
   // reading images is costly; check at most every 1.5s
@@ -287,7 +323,7 @@ async function watchTick(): Promise<void> {
       log(`send failed: ${String(err)}`);
     }
   });
-  if (files) await sendCopiedFiles(files);
+  if (files && cfg.data.sendCopiedFiles) await sendCopiedFiles(files);
 }
 
 async function sendCopiedFiles(paths: string[]): Promise<void> {
@@ -317,12 +353,54 @@ function uniquePath(dir: string, name: string): string {
   return candidate;
 }
 
+function downloadDir(): string {
+  return cfg.data.downloadDir || path.join(app.getPath('downloads'), 'OmniClip');
+}
+
 async function saveFile(clip: Clip, data: Buffer): Promise<void> {
-  const dir = path.join(app.getPath('downloads'), 'OmniClip');
+  const dir = downloadDir();
   fs.mkdirSync(dir, { recursive: true });
   const dest = uniquePath(dir, clip.name ?? 'file');
   fs.writeFileSync(dest, data);
-  notify(`File from ${clip.sourceName}`, `${path.basename(dest)} saved to Downloads/OmniClip`, () => shell.showItemInFolder(dest));
+  const pasteHint = cfg.data.filesToClipboard ? ` Press ${process.platform === 'darwin' ? '⌘V' : 'Ctrl+V'} in a folder to paste it.` : '';
+  notify(`File from ${clip.sourceName}`, `${path.basename(dest)} saved to ${path.basename(dir)}.${pasteHint}`, () => shell.showItemInFolder(dest));
+  if (cfg.data.filesToClipboard) queueFileForClipboard(dest);
+}
+
+// Files sent together arrive as separate clips; gather them so one paste brings them all.
+let incomingFiles: string[] = [];
+let incomingTimer: NodeJS.Timeout | undefined;
+
+function queueFileForClipboard(file: string): void {
+  incomingFiles.push(file);
+  clearTimeout(incomingTimer);
+  incomingTimer = setTimeout(() => {
+    const files = incomingFiles;
+    incomingFiles = [];
+    void writeClipboard(() => writeFilesToClipboard(files), true).catch((err) => log(`file clipboard failed: ${String(err)}`));
+  }, 1500);
+}
+
+function xmlEscape(s: string): string {
+  return s.replace(/[<>&'"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' })[c]!);
+}
+
+/** Puts file references on the clipboard, the same way Finder/Explorer do when you copy files. */
+async function writeFilesToClipboard(files: string[]): Promise<void> {
+  if (process.platform === 'darwin') {
+    const plist = `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><array>${files.map((f) => `<string>${xmlEscape(f)}</string>`).join('')}</array></plist>`;
+    await clipboard.write([new ClipboardItem({ 'electron application/osclipboard;format="NSFilenamesPboardType"': new Blob([plist], { type: 'text/plain' }) })]);
+  } else if (process.platform === 'win32') {
+    const list = files.map((f) => `'${f.replace(/'/g, "''")}'`).join(',');
+    await new Promise<void>((resolve, reject) =>
+      execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `Set-Clipboard -LiteralPath ${list}`], { windowsHide: true, timeout: 15_000 }, (err) =>
+        err ? reject(err) : resolve(),
+      ),
+    );
+  } else {
+    const uris = files.map((f) => `file://${encodeURI(f)}`).join('\r\n');
+    await clipboard.write([new ClipboardItem({ 'text/uri-list': new Blob([uris], { type: 'text/uri-list' }) })]);
+  }
 }
 
 /** Puts a clip on the local clipboard (or saves it, for files). */
@@ -460,19 +538,137 @@ function clipLabel(c: Clip): string {
   return `${c.kind === 'image' ? '🖼' : '📄'} ${c.name ?? c.kind}   (${src})`;
 }
 
+// ------------------------------------------------------------------ settings window
+
+function settingsChanged(): void {
+  if (settingsWin && !settingsWin.isDestroyed()) settingsWin.webContents.send('settings:changed');
+}
+
+async function openSettings(tab?: 'history'): Promise<void> {
+  if (settingsWin && !settingsWin.isDestroyed()) {
+    settingsWin.show();
+    settingsWin.focus();
+    return;
+  }
+  settingsWin = new BrowserWindow({
+    width: 560,
+    height: 640,
+    minWidth: 440,
+    minHeight: 420,
+    title: 'OmniClip Settings',
+    show: false,
+    autoHideMenuBar: true,
+    webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false },
+  });
+  settingsWin.once('ready-to-show', () => settingsWin?.show());
+  settingsWin.on('closed', () => (settingsWin = null));
+  await settingsWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(renderSettingsPage())}${tab ? `#${tab}` : ''}`);
+  if (process.platform === 'darwin') app.focus({ steal: true });
+}
+
+function settingsState() {
+  return {
+    deviceName: cfg.data.deviceName,
+    version: app.getVersion(),
+    statusLabel: stateLabel(),
+    connected: state.client?.status === 'online',
+    isHub: state.role === 'hub',
+    deviceId: state.deviceId,
+    hubDeviceId: state.hubDeviceId,
+    devices: state.devices,
+    pinned: state.pinned,
+    paused: cfg.data.paused,
+    sendCopiedFiles: cfg.data.sendCopiedFiles,
+    filesToClipboard: cfg.data.filesToClipboard,
+    openAtLogin: app.getLoginItemSettings().openAtLogin,
+    downloadDir: downloadDir(),
+    update: updater.available,
+    fileManager: process.platform === 'darwin' ? 'Finder' : 'Explorer',
+    pasteKey: process.platform === 'darwin' ? '⌘V' : 'Ctrl+V',
+  };
+}
+
+function connectedClient(): SyncClient {
+  const c = state.client;
+  if (!c || c.status !== 'online') throw new Error('Not connected to the hub right now.');
+  return c;
+}
+
+async function findClip(id: string): Promise<Clip> {
+  const known = [...state.pinned, ...state.recent].find((c) => c.id === id);
+  if (known) return known;
+  const found = (await connectedClient().search('', 200)).find((c) => c.id === id);
+  if (!found) throw new Error('That clip is no longer in the history.');
+  return found;
+}
+
+ipcMain.handle('settings:get', () => settingsState());
+ipcMain.handle('settings:set', (_e, key: string, value: unknown) => {
+  const on = !!value;
+  if (key === 'openAtLogin') app.setLoginItemSettings({ openAtLogin: on });
+  else if (key === 'paused' || key === 'sendCopiedFiles' || key === 'filesToClipboard') {
+    cfg.data[key] = on;
+    cfg.save();
+    // don't flush whatever was copied while paused
+    if (key === 'paused') void snapshot(true).then((snap) => guard.prime(snap?.fp ?? null));
+  } else throw new Error(`unknown setting ${key}`);
+  updateTray();
+  settingsChanged();
+});
+ipcMain.handle('settings:rename', async (_e, name: string) => {
+  const clean = String(name).trim().slice(0, 64);
+  if (!clean) throw new Error('The name cannot be empty.');
+  cfg.data.deviceName = clean;
+  cfg.save();
+  if (state.client?.status === 'online') await state.client.rename(clean);
+  if (state.hub) {
+    // re-advertise so other computers see the new hub name
+    state.stopAdvertising?.();
+    state.stopAdvertising = advertise({ port: state.hub.ports.tls, networkId: state.hub.networkId, hubName: clean });
+  }
+  settingsChanged();
+});
+ipcMain.handle('settings:chooseDownloadDir', async () => {
+  const res = await dialog.showOpenDialog({ title: 'Save received files to', defaultPath: downloadDir(), properties: ['openDirectory', 'createDirectory'] });
+  if (res.canceled || !res.filePaths[0]) return;
+  cfg.data.downloadDir = res.filePaths[0];
+  cfg.save();
+  settingsChanged();
+});
+ipcMain.handle('settings:openDownloadDir', async () => {
+  fs.mkdirSync(downloadDir(), { recursive: true });
+  await shell.openPath(downloadDir());
+});
+ipcMain.handle('settings:removeDevice', async (_e, id: string) => {
+  if (state.hub) {
+    if (!state.hub.revokeDevice(id)) throw new Error('That device could not be removed.');
+  } else await connectedClient().removeDevice(id);
+});
+ipcMain.handle('settings:search', (_e, query: string) => connectedClient().search(String(query ?? ''), 100));
+ipcMain.handle('settings:pin', (_e, id: string, pinned: boolean) => connectedClient().setPinned(id, !!pinned));
+ipcMain.handle('settings:copy', async (_e, id: string) => applyClip(await findClip(id), false));
+ipcMain.handle('settings:pair', () => openPairWindow());
+ipcMain.handle('settings:checkUpdates', async () => {
+  if (updater.available) return updater.install();
+  const found = await updater.check();
+  if (!found) notify('OmniClip', `You're on the latest version (${app.getVersion()}).`);
+  settingsChanged();
+});
+
 function updateTray(): void {
   if (!tray) return;
   const connected = state.client?.status === 'online';
   const devices: MenuItemConstructorOptions[] = state.devices.map((d) => {
     const label = `${d.online ? '●' : '○'}  ${d.name}${d.id === state.deviceId ? ' (this computer)' : ''}`;
-    if (state.role !== 'hub' || d.id === state.deviceId) return { label, enabled: false };
+    if (!connected || d.id === state.deviceId || d.id === state.hubDeviceId) return { label, enabled: false };
     return {
       label,
       submenu: [
         {
           label: `Remove ${d.name}`,
           click: () => {
-            state.hub?.revokeDevice(d.id);
+            if (state.hub) state.hub.revokeDevice(d.id);
+            else state.client?.removeDevice(d.id).catch((err) => notify('OmniClip', `Could not remove ${d.name}: ${String(err)}`));
           },
         },
       ],
@@ -489,10 +685,17 @@ function updateTray(): void {
   if (state.role === 'unpaired') template.push({ label: `Join ${state.pending?.hub.hubName ?? 'hub'}…`, click: () => void openPairWindow() });
   if (state.role === 'error' || state.role === 'unpaired') template.push({ label: 'Search again', click: () => void boot() });
   template.push(
+    ...(state.pinned.length
+      ? [{ label: 'Pinned', submenu: state.pinned.slice(0, 20).map((c) => ({ label: `📌 ${clipLabel(c)}`, click: () => void applyClip(c, false) })) }]
+      : []),
     {
       label: 'Recent',
       enabled: state.recent.length > 0,
-      submenu: state.recent.slice(0, 12).map((c) => ({ label: clipLabel(c), click: () => void applyClip(c, false) })),
+      submenu: [
+        ...state.recent.slice(0, 12).map((c) => ({ label: clipLabel(c), click: () => void applyClip(c, false) })),
+        { type: 'separator' as const },
+        { label: 'Search history…', click: () => void openSettings('history') },
+      ],
     },
     {
       label: 'Send file…',
@@ -522,6 +725,7 @@ function updateTray(): void {
       checked: app.getLoginItemSettings().openAtLogin,
       click: (item) => app.setLoginItemSettings({ openAtLogin: item.checked }),
     },
+    { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => void openSettings() },
     {
       label: 'Check for updates',
       enabled: app.isPackaged,

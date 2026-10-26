@@ -17,6 +17,8 @@ import {
   MAX_UPLOAD_BYTES,
   PROTOCOL_VERSION,
   PairRequestSchema,
+  PinRequestSchema,
+  RenameRequestSchema,
   TextClipRequestSchema,
   isDesktopPlatform,
   type Clip,
@@ -298,7 +300,8 @@ export class Hub extends EventEmitter {
       // allow the Apple Shortcut / other origins to call the API with a bearer token
       if (req.url.startsWith('/api/') || req.url === '/ca.crt') {
         reply.header('Access-Control-Allow-Origin', '*');
-        reply.header('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+        reply.header('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Filename');
+        reply.header('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
       }
     });
     app.options('/api/*', async (_req, reply) => reply.code(204).send());
@@ -341,8 +344,40 @@ export class Hub extends EventEmitter {
 
     app.get('/api/clips', async (req, reply) => {
       if (!this.requireDevice(req, reply)) return;
-      const limit = Number((req.query as Record<string, string>).limit) || undefined;
-      return this.store.clips(limit);
+      const query = req.query as Record<string, string>;
+      const limit = Number(query.limit) || undefined;
+      if (query.pinned === '1') return this.store.pinnedClips();
+      return query.q ? this.store.search(query.q, limit) : this.store.clips(limit);
+    });
+
+    app.post('/api/clips/:id/pin', async (req, reply) => {
+      if (!this.requireDevice(req, reply)) return;
+      const body = PinRequestSchema.safeParse(req.body);
+      if (!body.success) return reply.code(400).send({ error: 'expected {"pinned": true|false}' });
+      const clip = this.store.setPinned((req.params as { id: string }).id, body.data.pinned);
+      if (!clip) return reply.code(404).send({ error: 'not found' });
+      this.broadcast({ type: 'clip:update', clip });
+      return clip;
+    });
+
+    app.patch('/api/me', async (req, reply) => {
+      const device = this.requireDevice(req, reply);
+      if (!device) return;
+      const body = RenameRequestSchema.safeParse(req.body);
+      if (!body.success) return reply.code(400).send({ error: 'expected {"name": "..."} (1-64 characters)' });
+      this.store.renameDevice(device.id, body.data.name);
+      this.devicesChanged();
+      return { deviceId: device.id, name: body.data.name, networkId: this.networkId };
+    });
+
+    // desktops can remove devices (phones can't); a device can always remove itself
+    app.delete('/api/devices/:id', async (req, reply) => {
+      const device = this.requireDevice(req, reply);
+      if (!device) return;
+      const id = (req.params as { id: string }).id;
+      if (id !== device.id && !isDesktopPlatform(device.platform)) return reply.code(403).send({ error: 'only computers can remove other devices' });
+      if (!this.revokeDevice(id)) return reply.code(404).send({ error: 'not found (the hub computer itself cannot be removed)' });
+      return { ok: true };
     });
 
     app.post('/api/clips', async (req, reply) => {
@@ -405,6 +440,7 @@ export class Hub extends EventEmitter {
           networkId: this.networkId,
           hubDeviceId: this.localDeviceId,
           history: this.store.clips(50),
+          pinned: this.store.pinnedClips(),
           devices: this.listDevices(),
         });
         if (isDesktopPlatform(device.platform) && device.id !== this.localDeviceId) {

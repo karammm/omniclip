@@ -91,6 +91,14 @@ export function sendFile(token: string, file: Blob, name: string, kind?: 'file')
   return call('/api/clips', { method: 'POST', body: form }, token);
 }
 
+export function searchClips(token: string, query: string, limit = 100): Promise<Clip[]> {
+  return call(`/api/clips?limit=${limit}&q=${encodeURIComponent(query)}`, {}, token);
+}
+
+export function setPinned(token: string, id: string, pinned: boolean): Promise<Clip> {
+  return call(`/api/clips/${encodeURIComponent(id)}/pin`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pinned }) }, token);
+}
+
 export function listDevices(token: string): Promise<Device[]> {
   return call('/api/devices', {}, token);
 }

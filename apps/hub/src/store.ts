@@ -78,6 +78,14 @@ export class Store {
     this.save();
   }
 
+  renameDevice(id: string, name: string): DeviceRecord | undefined {
+    const d = this.data.devices.find((x) => x.id === id);
+    if (!d) return undefined;
+    d.name = name;
+    this.save();
+    return d;
+  }
+
   touchDevice(id: string): void {
     const d = this.data.devices.find((x) => x.id === id);
     if (d) {
@@ -104,6 +112,26 @@ export class Store {
     return this.data.clips.find((c) => c.id === id);
   }
 
+  pinnedClips(): Clip[] {
+    return this.data.clips.filter((c) => c.pinned);
+  }
+
+  /** Case-insensitive search over text and file names, newest first. */
+  search(query: string, limit = this.limits.historyLimit): Clip[] {
+    const q = query.trim().toLowerCase();
+    if (!q) return this.clips(limit);
+    return this.data.clips.filter((c) => (c.text ?? '').toLowerCase().includes(q) || (c.name ?? '').toLowerCase().includes(q)).slice(0, limit);
+  }
+
+  setPinned(id: string, pinned: boolean): Clip | undefined {
+    const c = this.clip(id);
+    if (!c) return undefined;
+    if (pinned) c.pinned = true;
+    else delete c.pinned;
+    this.save();
+    return c;
+  }
+
   blobPath(id: string): string {
     // ids are server-generated UUIDs; reject anything else to keep paths inside blobDir
     if (!/^[0-9a-f-]{36}$/.test(id)) throw new Error('bad clip id');
@@ -119,16 +147,26 @@ export class Store {
   }
 
   private prune(): string[] {
-    const removed: Clip[] = this.data.clips.splice(this.limits.historyLimit);
+    // pinned clips don't count towards either limit and are never removed
+    const removed: Clip[] = [];
+    let unpinned = 0;
     let blobBytes = 0;
     const keep: Clip[] = [];
     for (const c of this.data.clips) {
+      if (c.pinned) {
+        keep.push(c);
+        continue;
+      }
+      if (++unpinned > this.limits.historyLimit) {
+        removed.push(c);
+        continue;
+      }
       if (c.kind === 'text') {
         keep.push(c);
         continue;
       }
       // the newest clip is always kept, even if it alone exceeds the budget
-      if (keep.length > 0 && blobBytes + c.size > this.limits.blobBudgetBytes) {
+      if (unpinned > 1 && blobBytes + c.size > this.limits.blobBudgetBytes) {
         removed.push(c);
         continue;
       }

@@ -42,6 +42,34 @@ describe('Store', () => {
     expect(store.clips().map((c) => c.id)).toEqual([b.id]);
   });
 
+  it('never prunes pinned clips, and they do not count towards the limits', () => {
+    const store = new Store(tmp(), undefined, { historyLimit: 2, blobBudgetBytes: 100 });
+    const keep = textClip('keep me');
+    store.addClip(keep);
+    store.setPinned(keep.id, true);
+    const big = fileClip(store, 90);
+    store.addClip(big);
+    store.setPinned(big.id, true);
+    for (let i = 0; i < 4; i++) store.addClip(textClip(`t${i}`));
+    store.addClip(fileClip(store, 60)); // would exceed the budget if the pinned file counted
+    expect(store.clip(keep.id)?.pinned).toBe(true);
+    expect(fs.existsSync(store.blobPath(big.id))).toBe(true);
+    expect(store.pinnedClips().map((c) => c.id).sort()).toEqual([keep.id, big.id].sort());
+    expect(store.clips().filter((c) => !c.pinned)).toHaveLength(2);
+    store.setPinned(keep.id, false);
+    expect(store.clip(keep.id)?.pinned).toBeUndefined();
+  });
+
+  it('searches text and file names, case-insensitively', () => {
+    const store = new Store(tmp());
+    store.addClip(textClip('Meeting at 3pm'));
+    store.addClip({ ...fileClip(store, 1), name: 'Invoice-March.pdf' });
+    store.addClip(textClip('groceries'));
+    expect(store.search('meeting').map((c) => c.text)).toEqual(['Meeting at 3pm']);
+    expect(store.search('INVOICE').map((c) => c.name)).toEqual(['Invoice-March.pdf']);
+    expect(store.search('nothing')).toEqual([]);
+  });
+
   it('persists devices and finds them by token', () => {
     const dir = tmp();
     const store = new Store(dir);

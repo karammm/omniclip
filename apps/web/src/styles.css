@@ -109,3 +109,8 @@ main.center > .big { width: 100%; margin-top: 12px; }
 .switch { display: flex; gap: 10px; align-items: center; }
 .switch input { width: 20px; height: 20px; flex: none; }
 .small { font-size: 0.85rem; margin: 0; }
+
+/* search and pins */
+.search { width: 100%; margin: 4px 0 12px; }
+.row .pin { margin-left: auto; opacity: 0.75; }
+.row .pin.on { opacity: 1; border-color: #d97706; }
