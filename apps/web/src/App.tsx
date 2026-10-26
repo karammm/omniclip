@@ -15,8 +15,10 @@ import {
   pinOf,
   probeHub,
   saveSession,
+  searchClips,
   sendFile,
   sendText,
+  setPinned,
   setHubBase,
   type Session,
 } from './api';
@@ -327,7 +329,33 @@ function Main({
   onSession: (s: Session) => void;
   toast: (m: string) => void;
 }) {
-  const { status, clips, devices } = useHub(session.token, onRevoked, session.hub);
+  const { status, clips, pinned, devices } = useHub(session.token, onRevoked, session.hub);
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<Clip[] | null>(null);
+
+  // search runs on the hub so it covers the whole history, not just what this device has loaded
+  useEffect(() => {
+    const q = query.trim();
+    if (!q) return setResults(null);
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      searchClips(session.token, q)
+        .then((r) => !cancelled && setResults(r))
+        .catch(() => !cancelled && setResults([]));
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [query, session.token]);
+
+  const togglePin = (clip: Clip) =>
+    setPinned(session.token, clip.id, !clip.pinned)
+      .then((c) => {
+        setResults((r) => r && r.map((x) => (x.id === c.id ? c : x)));
+        toast(c.pinned ? 'Pinned' : 'Unpinned');
+      })
+      .catch((err) => toast(err instanceof Error ? err.message : 'Could not pin'));
   const [searching, setSearching] = useState(false);
   const sessionRef = useRef(session);
   sessionRef.current = session;
@@ -548,15 +576,43 @@ function Main({
         </button>
       </form>
 
-      <section>
-        <h2>Recent</h2>
-        {clips.length === 0 && <p class="muted">Nothing yet. Copy something on any device.</p>}
-        <ul class="feed">
-          {clips.map((c) => (
-            <ClipRow key={c.id} clip={c} session={session} toast={toast} />
-          ))}
-        </ul>
-      </section>
+      <input class="search" type="search" placeholder="Search history…" value={query} onInput={(e) => setQuery(e.currentTarget.value)} />
+
+      {results ? (
+        <section>
+          <h2>Results</h2>
+          {results.length === 0 && <p class="muted">Nothing matches "{query.trim()}".</p>}
+          <ul class="feed">
+            {results.map((c) => (
+              <ClipRow key={c.id} clip={c} session={session} toast={toast} onPin={togglePin} />
+            ))}
+          </ul>
+        </section>
+      ) : (
+        <>
+          {pinned.length > 0 && (
+            <section>
+              <h2>📌 Pinned</h2>
+              <ul class="feed">
+                {pinned.map((c) => (
+                  <ClipRow key={c.id} clip={c} session={session} toast={toast} onPin={togglePin} />
+                ))}
+              </ul>
+            </section>
+          )}
+          <section>
+            <h2>Recent</h2>
+            {clips.length === 0 && <p class="muted">Nothing yet. Copy something on any device.</p>}
+            <ul class="feed">
+              {clips
+                .filter((c) => !c.pinned)
+                .map((c) => (
+                  <ClipRow key={c.id} clip={c} session={session} toast={toast} onPin={togglePin} />
+                ))}
+            </ul>
+          </section>
+        </>
+      )}
 
       <DeviceList devices={devices} me={session.deviceId} />
     </main>
@@ -582,7 +638,7 @@ function formatSize(n: number): string {
   return `${(n / 1024 ** 2).toFixed(1)} MB`;
 }
 
-function ClipRow({ clip, session, toast }: { clip: Clip; session: Session; toast: (m: string) => void }) {
+function ClipRow({ clip, session, toast, onPin }: { clip: Clip; session: Session; toast: (m: string) => void; onPin: (c: Clip) => void }) {
   const [expanded, setExpanded] = useState(false);
   const url = clip.kind === 'text' ? '' : blobUrl(session.token, clip);
   const mine = clip.sourceDeviceId === session.deviceId;
@@ -642,6 +698,9 @@ function ClipRow({ clip, session, toast }: { clip: Clip; session: Session; toast
           </a>
         )}
         {clip.kind !== 'text' && (NATIVE || 'share' in navigator) && <button onClick={share}>{NATIVE ? 'Save / Share' : 'Share'}</button>}
+        <button class={clip.pinned ? 'pin on' : 'pin'} onClick={() => onPin(clip)} aria-label={clip.pinned ? 'Unpin' : 'Pin'} title={clip.pinned ? 'Unpin' : 'Pin'}>
+          {clip.pinned ? '📌 Unpin' : '📌 Pin'}
+        </button>
       </div>
     </li>
   );

@@ -78,8 +78,9 @@ export type ClientStatus = 'connecting' | 'online' | 'offline';
 
 export interface SyncClientEvents {
   status: [ClientStatus];
-  hello: [{ deviceId: string; history: Clip[]; devices: Device[] }];
+  hello: [{ deviceId: string; hubDeviceId: string; history: Clip[]; pinned: Clip[]; devices: Device[] }];
   clip: [Clip];
+  clipUpdate: [Clip];
   devices: [Device[]];
   registry: [Registry];
   revoked: [];
@@ -145,8 +146,9 @@ export class SyncClient extends EventEmitter<SyncClientEvents> {
     ws.on('message', (raw) => {
       const msg = parseServerMessage(raw.toString());
       if (!msg) return;
-      if (msg.type === 'hello') this.emit('hello', { deviceId: msg.deviceId, history: msg.history, devices: msg.devices });
+      if (msg.type === 'hello') this.emit('hello', { deviceId: msg.deviceId, hubDeviceId: msg.hubDeviceId, history: msg.history, pinned: msg.pinned ?? [], devices: msg.devices });
       else if (msg.type === 'clip:new') this.emit('clip', msg.clip);
+      else if (msg.type === 'clip:update') this.emit('clipUpdate', msg.clip);
       else if (msg.type === 'devices') this.emit('devices', msg.devices);
       else if (msg.type === 'registry') this.emit('registry', msg.registry);
       else if (msg.type === 'revoked') {
@@ -204,6 +206,39 @@ export class SyncClient extends EventEmitter<SyncClientEvents> {
       body,
     });
     if (res.status !== 200) throw new Error(`upload failed (${res.status})`);
+  }
+
+  private async json<T>(method: string, path: string, body?: unknown): Promise<T> {
+    const res = await request(this.addr, path, {
+      method,
+      ca: this.caPem,
+      headers: { ...this.auth(), ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const parsed = JSON.parse(res.body.toString() || '{}');
+    if (res.status !== 200) throw new Error(parsed.error ?? `request failed (${res.status})`);
+    return parsed as T;
+  }
+
+  /** Searches all history on the hub (newest first). An empty query returns the latest clips. */
+  search(query: string, limit = 100): Promise<Clip[]> {
+    return this.json('GET', `/api/clips?limit=${limit}${query ? `&q=${encodeURIComponent(query)}` : ''}`);
+  }
+
+  pinned(): Promise<Clip[]> {
+    return this.json('GET', '/api/clips?pinned=1');
+  }
+
+  setPinned(id: string, pinned: boolean): Promise<Clip> {
+    return this.json('POST', `/api/clips/${encodeURIComponent(id)}/pin`, { pinned });
+  }
+
+  rename(name: string): Promise<{ name: string }> {
+    return this.json('PATCH', '/api/me', { name });
+  }
+
+  removeDevice(id: string): Promise<{ ok: true }> {
+    return this.json('DELETE', `/api/devices/${encodeURIComponent(id)}`);
   }
 
   async fetchBlob(clip: Clip): Promise<Buffer> {

@@ -30,6 +30,8 @@ export const ClipSchema = z.object({
   sourceDeviceId: z.string(),
   sourceName: z.string(),
   createdAt: z.number(),
+  /** Pinned clips are kept at the top and never pruned. */
+  pinned: z.boolean().optional(),
 });
 export type Clip = z.infer<typeof ClipSchema>;
 
@@ -79,6 +81,10 @@ export const TextClipRequestSchema = z.object({
   text: z.string().min(1),
 });
 
+export const PinRequestSchema = z.object({ pinned: z.boolean() });
+
+export const RenameRequestSchema = z.object({ name: z.string().trim().min(1).max(64) });
+
 // ---- WebSocket (server -> client) ----
 
 export const ServerMessageSchema = z.discriminatedUnion('type', [
@@ -88,9 +94,13 @@ export const ServerMessageSchema = z.discriminatedUnion('type', [
     networkId: z.string(),
     hubDeviceId: z.string(),
     history: z.array(ClipSchema),
+    /** Pinned clips, which may be older than `history` reaches. */
+    pinned: z.array(ClipSchema).optional(),
     devices: z.array(DeviceSchema),
   }),
   z.object({ type: z.literal('clip:new'), clip: ClipSchema }),
+  /** A clip changed (pinned or unpinned). */
+  z.object({ type: z.literal('clip:update'), clip: ClipSchema }),
   z.object({ type: z.literal('devices'), devices: z.array(DeviceSchema) }),
   /** Sent only to desktop devices so another desktop can take over as hub. */
   z.object({ type: z.literal('registry'), registry: RegistrySchema }),

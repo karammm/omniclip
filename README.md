@@ -65,9 +65,11 @@ OmniClip connects **all** of your devices instead, and keeps your data **at home
 | 📷 **Pair by scanning a QR code** | Open the OmniClip app on your phone, tap **Scan QR code**, done. |
 | ⚡ **Auto-send on Android** | Copy something, open OmniClip, and it's already on your computer. |
 | 🖼️ **Text, links, images and files** | Images go straight onto the desktop clipboard. Files are saved to `Downloads/OmniClip`. |
-| 📁 **Copy files in Finder or Explorer** | Press ⌘C or Ctrl+C on files and they're sent to your other devices. |
+| 📁 **Copy and paste files across computers** | Press ⌘C or Ctrl+C on files in Finder or Explorer. On the other computer, ⌘V or Ctrl+V pastes them into any folder. |
+| 📌 **Search and pin** | Search your whole history from any device. Pinned clips stay at the top and never expire. |
+| ⚙️ **Settings window** | Rename the computer, manage devices, choose where files are saved, and search your history. |
 | ⬆️ **Automatic updates** | Windows installs updates in the background. Mac tells you when a new version is out. |
-| 🕘 **History** | Your last 200 clips. Click any of them to copy it again. |
+| 🕘 **History** | Your last 200 clips, plus any you've pinned. Click any of them to copy it again. |
 | 📤 **Share sheet integration** | Android: **Share → OmniClip** from any app. iOS: a one-tap Shortcut, including Back Tap. |
 | 🧭 **Zero configuration** | Computers find each other automatically over mDNS (Bonjour). |
 | 🛟 **Automatic failover** | If the hub computer shuts down, another desktop takes over within about 10 seconds, and phones find it on their own. |
@@ -126,6 +128,8 @@ Or run this once in Terminal instead of steps 2–3: `xattr -dr com.apple.quaran
 1. Download the `.apk` on your phone, or send it to the phone.
 2. Open it. Android asks you to allow installs from your browser or file manager. Allow it, then tap **Install**.
 3. If Play Protect warns about an unknown app, tap **Install anyway**.
+
+From v0.4.0 on, every release is signed with the same key, so new versions install over old ones. If you have v0.2 or v0.3 installed, uninstall it once before installing v0.4.0.
 </details>
 
 <details>
@@ -188,7 +192,8 @@ The tray menu also gives you:
 
 | Menu item | What it does |
 | --- | --- |
-| **Recent** | Your latest clips. Click one to put it back on this computer's clipboard. |
+| **Pinned** | Your pinned clips. Click one to copy it. |
+| **Recent** | Your latest clips. Click one to put it back on this computer's clipboard. **Search history…** opens the History tab. |
 | **Send file…** | Sends a file to every device. On a Mac you can also drag files onto the menu-bar icon. |
 | **Pair a phone or tablet…** | Shows the QR code and pairing code (hub only). |
 | **Devices** | Every paired device and whether it's online. Choose **Remove** to revoke one. |
@@ -196,13 +201,23 @@ The tray menu also gives you:
 | **Open at login** | Starts OmniClip automatically. |
 | **Check for updates** | Looks for a new version now. OmniClip also checks every 6 hours. |
 
-Files received from other devices are saved to `~/Downloads/OmniClip` (Windows: `Downloads\OmniClip`), and a notification appears.
+Files received from other devices are saved to `~/Downloads/OmniClip` (Windows: `Downloads\OmniClip`), a notification appears, and the files are put on the clipboard. Open any folder and press ⌘V or Ctrl+V to paste them there. Files sent together are pasted together.
+
+**Settings** (tray menu → **Settings…**, or ⌘, / Ctrl+,) has three tabs:
+
+| Tab | What's there |
+| --- | --- |
+| **General** | This computer's name, pause, file options (send copied files, put received files on the clipboard), where to save received files, open at login, updates |
+| **Devices** | Every paired device, whether it's online, and **Remove**. Any computer on the network can remove phones and tablets. |
+| **History** | Search everything ever copied (text and file names), copy or save any clip again, and pin or unpin clips |
 
 ### On a phone or tablet
 
 - **Paste & Send** reads your clipboard and sends it to every device. iOS asks you to confirm with a **Paste** button. That's normal.
 - **Send photo or file** opens the picker.
 - **Type or paste here** sends text you type.
+- **Search history** finds anything ever copied on any device, not just what's on screen.
+- **📌 Pin** keeps a clip at the top of every device's list. Pinned clips never expire.
 - Every clip in **Recent** has a **Copy** button. Images and files also have **Save / Share** (app) or **Download** and **Share** (web app).
 - **If the hub computer goes away**, the app shows **Looking for hub…**. It checks the other desktops and your local network, then reconnects to whichever computer took over.
 - **Android app:** copy something in any app, then open OmniClip, and it's sent automatically. You can also use **Share → OmniClip** from any app, for text, photos or files.
@@ -321,9 +336,14 @@ The hub has a small REST API, handy for scripts, Shortcuts, Tasker or automation
 | `GET` | `/api/me` | The device the token belongs to |
 | `GET` | `/api/devices` | Paired devices and their online status |
 | `GET` | `/api/clips?limit=N` | Clip history, newest first |
+| `GET` | `/api/clips?q=text` | Search text and file names across all history |
+| `GET` | `/api/clips?pinned=1` | Pinned clips |
+| `POST` | `/api/clips/:id/pin` | `{pinned: true\|false}`: pin or unpin a clip |
+| `PATCH` | `/api/me` | `{name}`: rename the calling device |
+| `DELETE` | `/api/devices/:id` | Remove a device (computers can remove any device; others only themselves) |
 | `POST` | `/api/clips` | Send a clip (see the formats below) |
 | `GET` | `/api/clips/:id/blob` | Download an image or file clip |
-| `GET` | `/ws` | WebSocket: `hello`, `clip:new`, `devices`, `revoked` events |
+| `GET` | `/ws` | WebSocket: `hello`, `clip:new`, `clip:update`, `devices`, `revoked` events |
 
 `POST /api/clips` accepts:
 

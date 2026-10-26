@@ -134,6 +134,42 @@ describe('Hub', () => {
   });
 });
 
+describe('pins, search, rename and removal', () => {
+  const auth = (t: string) => ({ authorization: `Bearer ${t}`, 'content-type': 'application/json' });
+
+  it('pins a clip, broadcasts the change and finds it by search', async () => {
+    const phone = await pair('Searcher');
+    const c = await connect(phone.token);
+    await c.next('hello');
+    const res = await fetch(`${http}/api/clips`, { method: 'POST', headers: auth(phone.token), body: JSON.stringify({ text: 'find the needle here' }) });
+    const clip = (await res.json()) as { id: string };
+    await fetch(`${http}/api/clips/${clip.id}/pin`, { method: 'POST', headers: auth(phone.token), body: JSON.stringify({ pinned: true }) });
+    const upd = await c.next('clip:update');
+    expect(upd.type === 'clip:update' && upd.clip.pinned).toBe(true);
+    const found = (await (await fetch(`${http}/api/clips?q=NEEDLE`, { headers: auth(phone.token) })).json()) as { id: string }[];
+    expect(found.map((x) => x.id)).toEqual([clip.id]);
+    const pinned = (await (await fetch(`${http}/api/clips?pinned=1`, { headers: auth(phone.token) })).json()) as { id: string }[];
+    expect(pinned.map((x) => x.id)).toContain(clip.id);
+    c.ws.close();
+  });
+
+  it('renames the calling device', async () => {
+    const phone = await pair('Old name');
+    const res = await fetch(`${http}/api/me`, { method: 'PATCH', headers: auth(phone.token), body: JSON.stringify({ name: 'New name' }) });
+    expect(((await res.json()) as { name: string }).name).toBe('New name');
+    expect(hub.listDevices().find((d) => d.id === phone.deviceId)?.name).toBe('New name');
+  });
+
+  it('lets computers remove devices, but not phones', async () => {
+    const phone = await pair('Victim');
+    const other = await pair('Other phone');
+    const mac = await pair('Admin Mac', 'mac');
+    expect((await fetch(`${http}/api/devices/${phone.deviceId}`, { method: 'DELETE', headers: { authorization: `Bearer ${other.token}` } })).status).toBe(403);
+    expect((await fetch(`${http}/api/devices/${phone.deviceId}`, { method: 'DELETE', headers: { authorization: `Bearer ${mac.token}` } })).status).toBe(200);
+    expect(hub.listDevices().some((d) => d.id === phone.deviceId)).toBe(false);
+  });
+});
+
 describe('raw uploads', () => {
   it('stores a raw image body as an image clip', async () => {
     const dev = await pair('Shortcut img', 'shortcut');

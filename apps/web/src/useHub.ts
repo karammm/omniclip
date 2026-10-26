@@ -9,6 +9,7 @@ export type Status = 'connecting' | 'online' | 'offline';
 export function useHub(token: string | null, onRevoked: () => void, hub?: string) {
   const [status, setStatus] = useState<Status>('connecting');
   const [clips, setClips] = useState<Clip[]>([]);
+  const [pinned, setPinned] = useState<Clip[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
   const revokedRef = useRef(onRevoked);
@@ -36,9 +37,14 @@ export function useHub(token: string | null, onRevoked: () => void, hub?: string
         if (!msg) return;
         if (msg.type === 'hello') {
           setClips(msg.history);
+          setPinned(msg.pinned ?? []);
           setDevices(msg.devices);
         } else if (msg.type === 'clip:new') {
           setClips((prev) => [msg.clip, ...prev.filter((c) => c.id !== msg.clip.id)].slice(0, 200));
+        } else if (msg.type === 'clip:update') {
+          const c = msg.clip;
+          setClips((prev) => prev.map((x) => (x.id === c.id ? c : x)));
+          setPinned((prev) => (c.pinned ? [c, ...prev.filter((x) => x.id !== c.id)] : prev.filter((x) => x.id !== c.id)));
         } else if (msg.type === 'devices') {
           setDevices(msg.devices);
         } else if (msg.type === 'revoked') {
@@ -84,5 +90,5 @@ export function useHub(token: string | null, onRevoked: () => void, hub?: string
     };
   }, [token, hub]);
 
-  return { status, clips, devices };
+  return { status, clips, pinned, devices };
 }
