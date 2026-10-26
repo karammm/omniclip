@@ -23,7 +23,7 @@ Drop a file on the Mac and pick it up on the iPad. No cloud, no account, no app 
 
 <br><br>
 
-**[⬇️ Download for Mac, Windows, Android and iPhone](https://github.com/karammm/omniclip/releases/latest)**
+**[⬇️ Download for Mac, Windows, Android and iPhone](https://github.com/karammm/omniclip/releases/latest)** · **[💬 Discussions](https://github.com/karammm/omniclip/discussions)**
 
 </div>
 
@@ -46,6 +46,7 @@ Drop a file on the Mac and pick it up on the iPad. No cloud, no account, no app 
 - [Troubleshooting](#troubleshooting)
 - [Known limitations](#known-limitations)
 - [Roadmap](#roadmap)
+- [Community and support](#community-and-support)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -462,6 +463,8 @@ npm run ios -w @omniclip/mobile      # opens Xcode; press Run to install on your
 
 ## Troubleshooting
 
+Still stuck? Ask in [Discussions → Q&A](https://github.com/karammm/omniclip/discussions/categories/q-a).
+
 <details>
 <summary><b>The phone says it can't reach the hub</b></summary>
 
@@ -516,6 +519,13 @@ That's expected in v0.1. Use **Send file…** or drag the file onto the menu-bar
 - [ ] Linux desktop build
 - [ ] End-to-end encryption of stored history
 - [ ] Optional Bluetooth for nearby devices without Wi-Fi
+
+## Community and support
+
+- 🙋 **Questions or setup help:** ask in [Q&A](https://github.com/karammm/omniclip/discussions/categories/q-a)
+- 💡 **Feature ideas:** post in [Ideas](https://github.com/karammm/omniclip/discussions/categories/ideas)
+- 🎉 **Show how you use it:** [Show and tell](https://github.com/karammm/omniclip/discussions/categories/show-and-tell)
+- 🐞 **Bugs:** open an [issue](https://github.com/karammm/omniclip/issues)
 
 ## Contributing
 
