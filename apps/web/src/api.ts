@@ -80,15 +80,20 @@ export function pair(code: string, name: string, platform: Platform): Promise<Pa
   return call('/api/pair', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code, name, platform }) });
 }
 
-export function sendText(token: string, text: string): Promise<Clip> {
-  return call('/api/clips', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text }) }, token);
+/** `to`: a device id to send to just that device; everyone when omitted. */
+function clipsPath(to?: string): string {
+  return to ? `/api/clips?to=${encodeURIComponent(to)}` : '/api/clips';
 }
 
-export function sendFile(token: string, file: Blob, name: string, kind?: 'file'): Promise<Clip> {
+export function sendText(token: string, text: string, to?: string): Promise<Clip> {
+  return call(clipsPath(to), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text }) }, token);
+}
+
+export function sendFile(token: string, file: Blob, name: string, kind?: 'file', to?: string): Promise<Clip> {
   const form = new FormData();
   if (kind) form.append('kind', kind); // fields must precede the file part
   form.append('file', file, name);
-  return call('/api/clips', { method: 'POST', body: form }, token);
+  return call(clipsPath(to), { method: 'POST', body: form }, token);
 }
 
 export function searchClips(token: string, query: string, limit = 100): Promise<Clip[]> {

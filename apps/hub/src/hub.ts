@@ -17,9 +17,11 @@ import {
   MAX_UPLOAD_BYTES,
   PROTOCOL_VERSION,
   PairRequestSchema,
+  SENSITIVE_TTL_MS,
   PinRequestSchema,
   RenameRequestSchema,
   TextClipRequestSchema,
+  detectSensitive,
   isDesktopPlatform,
   type Clip,
   type Device,
@@ -31,7 +33,7 @@ import {
 } from '@omniclip/protocol';
 import { ensureCerts, pinFingerprint, type KeyPair } from './certs.js';
 import { lanAddresses } from './net.js';
-import { Store, hashToken } from './store.js';
+import { Store, hashToken, visibleTo } from './store.js';
 
 export interface HubOptions {
   dataDir: string;
@@ -43,7 +45,25 @@ export interface HubOptions {
   portHttp?: number;
   /** Extra IPs to put in the server cert (tests). */
   extraIps?: string[];
+  /** How long passwords and codes live (tests shorten it). */
+  sensitiveTtlMs?: number;
   log?: (msg: string) => void;
+}
+
+export interface ClipOptions {
+  /** Deliver to this device only. */
+  to?: DeviceRecord;
+  /** true: the sender says it's a secret (e.g. copied from a password manager); false: don't guess. */
+  sensitive?: boolean;
+}
+
+export class ClipError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
 }
 
 export interface PairingCode {
@@ -67,6 +87,7 @@ export class Hub extends EventEmitter {
   localDeviceId = '';
   /** Where each connected desktop reached us from; any of them may become the next hub. */
   private peerAddresses = new Map<string, string[]>();
+  private expiry = new Map<string, NodeJS.Timeout>();
 
   constructor(opts: HubOptions) {
     super();
@@ -137,6 +158,8 @@ export class Hub extends EventEmitter {
 
   async stop(): Promise<void> {
     clearInterval(this.rotateTimer);
+    for (const t of this.expiry.values()) clearTimeout(t);
+    this.expiry.clear();
     for (const set of this.sockets.values()) for (const ws of set) ws.close();
     this.sockets.clear();
     await Promise.all(this.servers.map((s) => s.close()));
@@ -201,7 +224,8 @@ export class Hub extends EventEmitter {
 
   // ---- clips ----
 
-  addTextClip(device: DeviceRecord, text: string): Clip {
+  addTextClip(device: DeviceRecord, text: string, opts: ClipOptions = {}): Clip {
+    const sensitive = opts.sensitive ?? detectSensitive(text) !== null;
     const clip: Clip = {
       id: crypto.randomUUID(),
       kind: 'text',
@@ -212,13 +236,22 @@ export class Hub extends EventEmitter {
       sourceDeviceId: device.id,
       sourceName: device.name,
       createdAt: Date.now(),
+      ...target(opts),
+      ...(sensitive ? { sensitive: true, expiresAt: Date.now() + (this.opts.sensitiveTtlMs ?? SENSITIVE_TTL_MS) } : {}),
     };
     this.publishClip(clip);
     return clip;
   }
 
   /** Streams an upload into the blob store. Returns null if the upload hit the size limit. */
-  private async addBlobClip(device: DeviceRecord, source: Readable & { truncated?: boolean }, mimeType: string, filename: string | undefined, forceFile: boolean): Promise<Clip | null> {
+  private async addBlobClip(
+    device: DeviceRecord,
+    source: Readable & { truncated?: boolean },
+    mimeType: string,
+    filename: string | undefined,
+    forceFile: boolean,
+    opts: ClipOptions,
+  ): Promise<Clip | null> {
     const id = crypto.randomUUID();
     const dest = this.store.blobPath(id);
     const hash = crypto.createHash('sha256');
@@ -253,6 +286,7 @@ export class Hub extends EventEmitter {
       sourceDeviceId: device.id,
       sourceName: device.name,
       createdAt: Date.now(),
+      ...target(opts),
     };
     this.publishClip(clip);
     return clip;
@@ -260,8 +294,40 @@ export class Hub extends EventEmitter {
 
   private publishClip(clip: Clip): void {
     this.store.addClip(clip);
-    this.broadcast({ type: 'clip:new', clip });
+    this.deliver(clip, { type: 'clip:new', clip });
+    if (clip.expiresAt) this.expiry.set(clip.id, setTimeout(() => this.removeClip(clip.id), clip.expiresAt - Date.now()));
     this.emit('clip', clip);
+  }
+
+  /** Deletes a clip and tells every device that could see it. */
+  removeClip(id: string): boolean {
+    clearTimeout(this.expiry.get(id));
+    this.expiry.delete(id);
+    const clip = this.store.removeClip(id);
+    if (clip) this.deliver(clip, { type: 'clip:remove', id });
+    return !!clip;
+  }
+
+  /** Sends a clip message to the devices allowed to see the clip. */
+  private deliver(clip: Clip, msg: ServerMessage): void {
+    if (!clip.targetDeviceId) return this.broadcast(msg);
+    const raw = JSON.stringify(msg);
+    for (const [id, set] of this.sockets) {
+      if (!visibleTo(clip, id)) continue;
+      for (const ws of set) if (ws.readyState === ws.OPEN) ws.send(raw);
+    }
+  }
+
+  /** Reads `?to=<deviceId>&sensitive=0|1` from a clip upload. */
+  private clipOptions(req: FastifyRequest): ClipOptions {
+    const query = req.query as Record<string, string | undefined>;
+    const opts: ClipOptions = {};
+    if (query.to) {
+      opts.to = this.store.devices().find((d) => d.id === query.to);
+      if (!opts.to) throw new ClipError(404, 'That device is no longer paired.');
+    }
+    if (query.sensitive === '1' || query.sensitive === '0') opts.sensitive = query.sensitive === '1';
+    return opts;
   }
 
   // ---- transport ----
@@ -343,20 +409,25 @@ export class Hub extends EventEmitter {
     });
 
     app.get('/api/clips', async (req, reply) => {
-      if (!this.requireDevice(req, reply)) return;
+      const device = this.requireDevice(req, reply);
+      if (!device) return;
       const query = req.query as Record<string, string>;
       const limit = Number(query.limit) || undefined;
-      if (query.pinned === '1') return this.store.pinnedClips();
-      return query.q ? this.store.search(query.q, limit) : this.store.clips(limit);
+      if (query.pinned === '1') return this.store.pinnedClips(device.id);
+      return query.q ? this.store.search(query.q, limit, device.id) : this.store.clips(limit, device.id);
     });
 
     app.post('/api/clips/:id/pin', async (req, reply) => {
-      if (!this.requireDevice(req, reply)) return;
+      const device = this.requireDevice(req, reply);
+      if (!device) return;
       const body = PinRequestSchema.safeParse(req.body);
       if (!body.success) return reply.code(400).send({ error: 'expected {"pinned": true|false}' });
-      const clip = this.store.setPinned((req.params as { id: string }).id, body.data.pinned);
-      if (!clip) return reply.code(404).send({ error: 'not found' });
-      this.broadcast({ type: 'clip:update', clip });
+      const id = (req.params as { id: string }).id;
+      const existing = this.store.clip(id, device.id);
+      if (!existing) return reply.code(404).send({ error: 'not found' });
+      if (existing.sensitive) return reply.code(400).send({ error: "Passwords and codes can't be pinned." });
+      const clip = this.store.setPinned(id, body.data.pinned)!;
+      this.deliver(clip, { type: 'clip:update', clip });
       return clip;
     });
 
@@ -380,15 +451,23 @@ export class Hub extends EventEmitter {
       return { ok: true };
     });
 
+    // optional query: ?to=<deviceId> sends to one device; ?sensitive=1|0 overrides password detection
     app.post('/api/clips', async (req, reply) => {
       const device = this.requireDevice(req, reply);
       if (!device) return;
+      let opts: ClipOptions;
+      try {
+        opts = this.clipOptions(req);
+      } catch (err) {
+        if (err instanceof ClipError) return reply.code(err.status).send({ error: err.message });
+        throw err;
+      }
 
       if (req.isMultipart()) {
         const part = await req.file();
         if (!part) return reply.code(400).send({ error: 'no file' });
         const kindField = part.fields.kind as { value?: string } | undefined;
-        const clip = await this.addBlobClip(device, part.file, part.mimetype, part.filename, kindField?.value === 'file');
+        const clip = await this.addBlobClip(device, part.file, part.mimetype, part.filename, kindField?.value === 'file', opts);
         return clip ?? reply.code(413).send({ error: 'file too large' });
       }
 
@@ -396,19 +475,20 @@ export class Hub extends EventEmitter {
       if (Buffer.isBuffer(req.body)) {
         const mime = (req.headers['content-type'] ?? 'application/octet-stream').split(';')[0]!.trim();
         const name = req.headers['x-filename'] ? decodeURIComponent(String(req.headers['x-filename'])) : undefined;
-        return this.addBlobClip(device, Readable.from([req.body]), mime, name, false);
+        return this.addBlobClip(device, Readable.from([req.body]), mime, name, false, opts);
       }
 
       // JSON {text} or a raw text/plain body (handy for Apple Shortcuts)
       const text = typeof req.body === 'string' ? req.body : TextClipRequestSchema.safeParse(req.body).data?.text;
       if (!text) return reply.code(400).send({ error: 'expected {"text": "..."} or a file upload' });
       if (Buffer.byteLength(text) > MAX_TEXT_BYTES) return reply.code(413).send({ error: 'text too large' });
-      return this.addTextClip(device, text);
+      return this.addTextClip(device, text, opts);
     });
 
     app.get('/api/clips/:id/blob', async (req, reply) => {
-      if (!this.requireDevice(req, reply)) return;
-      const clip = this.store.clip((req.params as { id: string }).id);
+      const device = this.requireDevice(req, reply);
+      if (!device) return;
+      const clip = this.store.clip((req.params as { id: string }).id, device.id);
       if (!clip || clip.kind === 'text') return reply.code(404).send({ error: 'not found' });
       const disposition = clip.kind === 'image' ? 'inline' : 'attachment';
       const name = encodeURIComponent(clip.name ?? clip.id);
@@ -439,8 +519,8 @@ export class Hub extends EventEmitter {
           deviceId: device.id,
           networkId: this.networkId,
           hubDeviceId: this.localDeviceId,
-          history: this.store.clips(50),
-          pinned: this.store.pinnedClips(),
+          history: this.store.clips(50, device.id),
+          pinned: this.store.pinnedClips(device.id),
           devices: this.listDevices(),
         });
         if (isDesktopPlatform(device.platform) && device.id !== this.localDeviceId) {
@@ -483,4 +563,8 @@ export class Hub extends EventEmitter {
 
     return app;
   }
+}
+
+function target(opts: ClipOptions): Partial<Clip> {
+  return opts.to ? { targetDeviceId: opts.to.id, targetName: opts.to.name } : {};
 }

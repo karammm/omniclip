@@ -67,6 +67,31 @@ jobs:
             apps/desktop/release/latest.yml
           if-no-files-found: error
 
+  linux:
+    name: Linux (.AppImage + .deb)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: node scripts/set-version.mjs "$VERSION"
+      - run: npm run build:web
+      - name: Build AppImage and deb
+        working-directory: apps/desktop
+        run: node build.mjs && npx electron-builder --linux --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          # latest-linux.yml lets the AppImage update itself
+          path: |
+            apps/desktop/release/*.AppImage
+            apps/desktop/release/*.deb
+            apps/desktop/release/latest-linux.yml
+          if-no-files-found: error
+
   android:
     name: Android (.apk)
     runs-on: ubuntu-latest
@@ -141,7 +166,7 @@ jobs:
   release:
     name: Publish release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [mac, windows, android, ios]
+    needs: [mac, windows, linux, android, ios]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -161,6 +186,8 @@ jobs:
             | **Mac** (Intel) | `OmniClip-*-mac-x64.dmg` |
             | **Windows** (home) | `OmniClip-Setup-*-x64.exe` |
             | **Windows** (IT / managed PCs) | `OmniClip-*-x64.msi` |
+            | **Linux** (any distro, updates itself) | `OmniClip-*-linux-x86_64.AppImage` |
+            | **Linux** (Ubuntu / Debian) | `OmniClip-*-linux-amd64.deb` |
             | **Android** | `OmniClip-*-android.apk` |
             | **iPhone / iPad** | `OmniClip-*-ios-unsigned.ipa` (install with [Sideloadly](https://sideloadly.io) or AltStore, or build from source in Xcode) |
 

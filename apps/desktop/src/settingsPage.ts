@@ -20,6 +20,8 @@ h2 { font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:var(-
 h2:first-child { margin-top:0; }
 input[type=text], input[type=search] { font:inherit; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--card); color:var(--text); width:100%; }
 input[type=checkbox] { width:18px; height:18px; accent-color:var(--accent); }
+select { font:inherit; padding:6px 8px; border-radius:8px; border:1px solid var(--border); background:var(--card); color:var(--text); }
+.warn { color:var(--bad); font-size:12px; margin-top:6px; }
 button.btn { font:inherit; padding:6px 12px; border-radius:8px; border:1px solid var(--border); background:var(--card); color:var(--text); cursor:pointer; white-space:nowrap; }
 button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
 button.danger { color:var(--bad); }
@@ -89,6 +91,15 @@ function toggle(label, hint, key) {
     el('input', { type: 'checkbox', checked: !!state[key], onchange: (e) => act(() => api.set(key, e.target.checked)) }),
   );
 }
+function choice(label, hint, key, options) {
+  const select = el('select', { onchange: (e) => act(() => api.set(key, e.target.value)) },
+    ...options.map((o) => el('option', { value: o.value }, o.label)));
+  select.value = state[key];
+  return el('div', { class: 'row' },
+    el('div', {}, el('div', {}, label), hint ? el('div', { class: 'muted small' }, hint) : null),
+    select,
+  );
+}
 function renderGeneral() {
   const name = el('input', { type: 'text', value: state.deviceName, maxlength: '64' });
   const save = el('button', { class: 'btn primary', onclick: () => act(async () => { await api.rename(name.value); alertBar(''); }) }, 'Save');
@@ -105,6 +116,17 @@ function renderGeneral() {
       toggle('Pause syncing', 'Stop sending and receiving until you turn this off.', 'paused'),
       toggle('Send files I copy', 'Files copied in ' + state.fileManager + ' are sent to your other devices (up to 20 files, 100 MB).', 'sendCopiedFiles'),
       toggle('Put received files on the clipboard', 'Paste them straight into a folder with ' + state.pasteKey + '.', 'filesToClipboard'),
+      choice('Passwords and codes', 'Detected passwords, one-time codes and card numbers are never saved in history.', 'sensitive', [
+        { value: 'expire', label: 'Send, then clear after 1 minute' },
+        { value: 'skip', label: 'Never send' },
+        { value: 'off', label: 'Treat as normal text' },
+      ]),
+    ),
+    el('h2', {}, 'Quick paste'),
+    el('div', { class: 'card' },
+      choice('Shortcut', 'Opens your recent clips next to the mouse, from any app.', 'hotkey', state.hotkeys),
+      state.hotkeyError ? el('div', { class: 'warn' }, state.hotkeyError) : null,
+      toggle('Paste right away', 'Otherwise the clip is only copied, ready for ' + state.pasteKey + '.' + (state.fileManager === 'Finder' ? ' On a Mac this needs OmniClip allowed in System Settings → Privacy & Security → Accessibility.' : ''), 'autoPaste'),
     ),
     el('h2', {}, 'Received files'),
     el('div', { class: 'card' },
@@ -138,9 +160,14 @@ function renderDevices() {
         d.id === state.deviceId ? el('span', { class: 'muted' }, ' (this computer)') : null,
         d.id === state.hubDeviceId ? el('span', { class: 'muted' }, ' · hub') : null,
       ),
-      d.id === state.deviceId || d.id === state.hubDeviceId || !state.connected
-        ? null
-        : el('button', { class: 'btn danger', onclick: () => confirmRemove(d) }, 'Remove'),
+      el('div', { style: 'display:flex;gap:6px' },
+        d.id === state.deviceId || !state.connected
+          ? null
+          : el('button', { class: 'btn', title: 'Send what is on this computer’s clipboard to ' + d.name, onclick: () => act(() => api.sendClipboardTo(d.id)) }, 'Send clipboard'),
+        d.id === state.deviceId || d.id === state.hubDeviceId || !state.connected
+          ? null
+          : el('button', { class: 'btn danger', onclick: () => confirmRemove(d) }, 'Remove'),
+      ),
     ),
   );
   $('#devices').replaceChildren(
@@ -165,15 +192,20 @@ function confirmRemove(d) {
 
 // ---- history
 function clipRow(c) {
-  const preview = c.kind === 'text' ? el('div', { class: 'text' }, c.text || '') : el('div', {}, (c.kind === 'image' ? '🖼 ' : '📄 ') + (c.name || c.kind));
+  const preview = c.kind !== 'text'
+    ? el('div', {}, (c.kind === 'image' ? '🖼 ' : '📄 ') + (c.name || c.kind))
+    : c.sensitive ? el('div', { class: 'text muted' }, '🔒 •••••••• (password or code, deleted after a minute)') : el('div', { class: 'text' }, c.text || '');
+  const from = c.sourceDeviceId === state.deviceId ? 'This computer' : c.sourceName;
+  const to = c.targetName ? ' → ' + (c.targetDeviceId === state.deviceId ? 'this computer' : c.targetName) : '';
   return el('div', { class: 'clip' },
     el('div', { class: 'body' },
       preview,
-      el('div', { class: 'muted small' }, (c.pinned ? '📌 ' : '') + (c.sourceDeviceId === state.deviceId ? 'This computer' : c.sourceName) + ' · ' + ago(c.createdAt)),
+      el('div', { class: 'muted small' }, (c.pinned ? '📌 ' : '') + from + to + ' · ' + ago(c.createdAt)),
     ),
     el('div', { class: 'actions' },
       el('button', { class: 'btn', onclick: () => act(() => api.copy(c.id)) }, c.kind === 'file' ? 'Save' : 'Copy'),
-      el('button', { class: 'btn' + (c.pinned ? ' pin' : ''), title: c.pinned ? 'Unpin' : 'Pin', onclick: () => act(async () => { await api.pin(c.id, !c.pinned); runSearch(); }) }, c.pinned ? 'Unpin' : 'Pin'),
+      state.connected ? el('button', { class: 'btn', title: 'Send to one device', onclick: () => act(() => api.sendTo(c.id)) }, 'Send to…') : null,
+      c.sensitive ? null : el('button', { class: 'btn' + (c.pinned ? ' pin' : ''), title: c.pinned ? 'Unpin' : 'Pin', onclick: () => act(async () => { await api.pin(c.id, !c.pinned); runSearch(); }) }, c.pinned ? 'Unpin' : 'Pin'),
     ),
   );
 }

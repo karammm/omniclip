@@ -14,8 +14,18 @@ contextBridge.exposeInMainWorld('omniclip', {
     copy: (id: string) => ipcRenderer.invoke('settings:copy', id),
     pair: () => ipcRenderer.invoke('settings:pair'),
     checkUpdates: () => ipcRenderer.invoke('settings:checkUpdates'),
+    sendTo: (id: string) => ipcRenderer.invoke('settings:sendTo', id),
+    sendClipboardTo: (deviceId: string) => ipcRenderer.invoke('settings:sendClipboardTo', deviceId),
     onChange: (fn: () => void) => {
       ipcRenderer.on('settings:changed', fn);
+    },
+  },
+  picker: {
+    list: (query: string) => ipcRenderer.invoke('picker:list', query),
+    choose: (id: string) => ipcRenderer.invoke('picker:choose', id),
+    close: () => ipcRenderer.invoke('picker:close'),
+    onShow: (fn: () => void) => {
+      ipcRenderer.on('picker:show', fn);
     },
   },
 });

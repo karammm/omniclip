@@ -45,6 +45,9 @@ export function useHub(token: string | null, onRevoked: () => void, hub?: string
           const c = msg.clip;
           setClips((prev) => prev.map((x) => (x.id === c.id ? c : x)));
           setPinned((prev) => (c.pinned ? [c, ...prev.filter((x) => x.id !== c.id)] : prev.filter((x) => x.id !== c.id)));
+        } else if (msg.type === 'clip:remove') {
+          setClips((prev) => prev.filter((x) => x.id !== msg.id));
+          setPinned((prev) => prev.filter((x) => x.id !== msg.id));
         } else if (msg.type === 'devices') {
           setDevices(msg.devices);
         } else if (msg.type === 'revoked') {

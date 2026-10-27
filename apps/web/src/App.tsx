@@ -396,6 +396,15 @@ function Main({
   }, [status, session.hub]);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
+  // '' sends to every device; otherwise a device id
+  const [target, setTarget] = useState('');
+  const others = devices.filter((d) => d.id !== session.deviceId);
+  const targetDevice = others.find((d) => d.id === target);
+  const to = targetDevice?.id;
+  const sentTo = targetDevice ? `Sent to ${targetDevice.name}` : 'Sent to all devices';
+  useEffect(() => {
+    if (target && devices.length && !targetDevice) setTarget('');
+  }, [devices]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const clipsRef = useRef(clips);
@@ -453,24 +462,24 @@ function Main({
     run(async () => {
       const content = await readClipboard();
       if (!content) throw new Error('Clipboard is empty');
-      if (content.kind === 'text') await sendText(session.token, content.text);
-      else await sendFile(session.token, content.blob, `image.${content.blob.type.split('/')[1] ?? 'png'}`);
-    }, 'Sent to all devices');
+      if (content.kind === 'text') await sendText(session.token, content.text, to);
+      else await sendFile(session.token, content.blob, `image.${content.blob.type.split('/')[1] ?? 'png'}`, undefined, to);
+    }, sentTo);
 
   const sendDraft = (e: Event) => {
     e.preventDefault();
     if (!draft.trim()) return;
     void run(async () => {
-      await sendText(session.token, draft);
+      await sendText(session.token, draft, to);
       setDraft('');
-    }, 'Sent to all devices');
+    }, sentTo);
   };
 
   const onFiles = (files: FileList | null) => {
     if (!files?.length) return;
     void run(async () => {
-      for (const f of Array.from(files)) await sendFile(session.token, f, f.name, f.type.startsWith('image/') ? undefined : 'file');
-    }, files.length > 1 ? `Sent ${files.length} files` : 'Sent');
+      for (const f of Array.from(files)) await sendFile(session.token, f, f.name, f.type.startsWith('image/') ? undefined : 'file', to);
+    }, files.length > 1 ? sentTo.replace('Sent', `Sent ${files.length} files`) : sentTo);
     if (fileInput.current) fileInput.current.value = '';
   };
 
@@ -549,6 +558,21 @@ function Main({
         <p class="banner">
           Basic mode. Copy works, but to send you have to paste into the box below. <a href="/setup">Turn on secure mode</a>
         </p>
+      )}
+
+      {others.length > 0 && (
+        <label class="target">
+          <span>Send to</span>
+          <select value={target} onChange={(e) => setTarget(e.currentTarget.value)}>
+            <option value="">All devices</option>
+            {others.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name}
+                {d.online ? '' : ' (offline)'}
+              </option>
+            ))}
+          </select>
+        </label>
       )}
 
       <section class="actions">
@@ -640,8 +664,10 @@ function formatSize(n: number): string {
 
 function ClipRow({ clip, session, toast, onPin }: { clip: Clip; session: Session; toast: (m: string) => void; onPin: (c: Clip) => void }) {
   const [expanded, setExpanded] = useState(false);
+  const [revealed, setRevealed] = useState(false);
   const url = clip.kind === 'text' ? '' : blobUrl(session.token, clip);
   const mine = clip.sourceDeviceId === session.deviceId;
+  const to = clip.targetName ? ` → ${clip.targetDeviceId === session.deviceId ? 'you' : clip.targetName}` : '';
 
   const copy = async () => {
     const ok = clip.kind === 'text' ? await copyText(clip.text ?? '') : await copyImage(url);
@@ -668,10 +694,18 @@ function ClipRow({ clip, session, toast, onPin }: { clip: Clip; session: Session
   return (
     <li class="clip card">
       <div class="meta">
-        <span>{mine ? 'This device' : clip.sourceName}</span>
+        <span>
+          {mine ? 'This device' : clip.sourceName}
+          {to}
+        </span>
         <span>{timeAgo(clip.createdAt)}</span>
       </div>
-      {clip.kind === 'text' && (
+      {clip.kind === 'text' && clip.sensitive && !revealed && (
+        <pre class="text secret" onClick={() => setRevealed(true)}>
+          🔒 •••••••• <span class="muted">Password or code · tap to show · deleted after a minute</span>
+        </pre>
+      )}
+      {clip.kind === 'text' && (!clip.sensitive || revealed) && (
         <pre class={expanded ? 'text expanded' : 'text'} onClick={() => setExpanded(!expanded)}>
           {clip.text}
         </pre>
@@ -698,9 +732,11 @@ function ClipRow({ clip, session, toast, onPin }: { clip: Clip; session: Session
           </a>
         )}
         {clip.kind !== 'text' && (NATIVE || 'share' in navigator) && <button onClick={share}>{NATIVE ? 'Save / Share' : 'Share'}</button>}
-        <button class={clip.pinned ? 'pin on' : 'pin'} onClick={() => onPin(clip)} aria-label={clip.pinned ? 'Unpin' : 'Pin'} title={clip.pinned ? 'Unpin' : 'Pin'}>
-          {clip.pinned ? '📌 Unpin' : '📌 Pin'}
-        </button>
+        {!clip.sensitive && (
+          <button class={clip.pinned ? 'pin on' : 'pin'} onClick={() => onPin(clip)} aria-label={clip.pinned ? 'Unpin' : 'Pin'} title={clip.pinned ? 'Unpin' : 'Pin'}>
+            {clip.pinned ? '📌 Unpin' : '📌 Pin'}
+          </button>
+        )}
       </div>
     </li>
   );

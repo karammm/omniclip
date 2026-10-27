@@ -24,7 +24,7 @@ async function printPairing(): Promise<void> {
   }
 }
 hub.on('pairingCode', () => void printPairing());
-hub.on('clip', (c) => console.log(`[clip] ${c.kind} from ${c.sourceName}: ${c.text?.slice(0, 60) ?? c.name}`));
+hub.on('clip', (c) => console.log(`[clip] ${c.kind} from ${c.sourceName}: ${c.sensitive ? "(hidden)" : (c.text?.slice(0, 60) ?? c.name)}`));
 await printPairing();
 
 async function shutdown(): Promise<void> {

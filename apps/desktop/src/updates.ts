@@ -9,16 +9,18 @@ const CHECK_EVERY_MS = 6 * 60 * 60 * 1000;
 
 export interface UpdateInfo {
   version: string;
-  /** Windows .exe installs download in the background; everything else links to the release page. */
+  /** Windows .exe and Linux AppImage installs download in the background; everything else links to the release page. */
   ready: boolean;
   url: string;
 }
 
 /**
- * Background installs only work for the per-user Windows installer (.exe); macOS needs a signed app
- * and MSI installs are managed by IT. Those get a notification with a download link instead.
+ * Background installs only work for the per-user Windows installer (.exe) and the Linux AppImage;
+ * macOS needs a signed app, and MSI and .deb installs are managed by the system. Those get a
+ * notification with a download link instead.
  */
 function canAutoInstall(): boolean {
+  if (process.platform === 'linux') return !!process.env.APPIMAGE;
   if (process.platform !== 'win32' || !process.env.LOCALAPPDATA) return false;
   return path.resolve(process.execPath).toLowerCase().startsWith(path.resolve(process.env.LOCALAPPDATA).toLowerCase());
 }

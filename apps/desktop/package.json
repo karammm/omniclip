@@ -1,7 +1,7 @@
 {
   "name": "@omniclip/desktop",
   "productName": "OmniClip",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "license": "MIT",
   "private": true,
   "description": "One clipboard for every device on your Wi-Fi",
@@ -14,11 +14,12 @@
     "build": "node build.mjs",
     "dev": "node build.mjs && electron .",
     "dist:mac": "node build.mjs && electron-builder --mac --publish never",
-    "dist:win": "node build.mjs && electron-builder --win --publish never"
+    "dist:win": "node build.mjs && electron-builder --win --publish never",
+    "dist:linux": "node build.mjs && electron-builder --linux --publish never"
   },
   "devDependencies": {
-    "@omniclip/hub": "0.4.0",
-    "@omniclip/protocol": "0.4.0",
+    "@omniclip/hub": "0.5.0",
+    "@omniclip/protocol": "0.5.0",
     "electron": "45.0.0",
     "electron-builder": "^26.0.0",
     "electron-updater": "^6.8.11",
@@ -89,6 +90,32 @@
         }
       ]
     },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "executableName": "omniclip",
+      "category": "Utility",
+      "synopsis": "One clipboard for every device on your Wi-Fi",
+      "maintainer": "karammm <56406583+karammm@users.noreply.github.com>",
+      "desktop": {
+        "entry": {
+          "StartupWMClass": "omniclip"
+        }
+      },
+      "artifactName": "OmniClip-${version}-linux-${arch}.${ext}"
+    },
     "nsis": {
       "oneClick": false,
       "perMachine": false,
@@ -117,7 +144,14 @@
         "owner": "karammm",
         "repo": "omniclip"
       }
-    ]
+    ],
+    "deb": {
+      "recommends": [
+        "libayatana-appindicator3-1",
+        "xdotool"
+      ]
+    }
   },
-  "homepage": "https://github.com/karammm/omniclip"
+  "homepage": "https://github.com/karammm/omniclip",
+  "desktopName": "omniclip.desktop"
 }

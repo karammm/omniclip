@@ -1,7 +1,7 @@
 {
   "name": "omniclip",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.5.0",
   "license": "MIT",
   "description": "One clipboard for every device on your Wi-Fi",
   "workspaces": [
@@ -15,6 +15,7 @@
     "dev:desktop": "npm run build:web && npm run dev -w @omniclip/desktop",
     "dist:mac": "npm run build:web && npm run dist:mac -w @omniclip/desktop",
     "dist:win": "npm run build:web && npm run dist:win -w @omniclip/desktop",
+    "dist:linux": "npm run build:web && npm run dist:linux -w @omniclip/desktop",
     "test": "vitest run",
     "test:e2e": "tsx scripts/fake-clients.ts",
     "typecheck": "tsc -p packages/protocol && tsc -p apps/hub && tsc -p apps/desktop && tsc -p apps/web"

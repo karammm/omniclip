@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ClipSchema, PairRequestSchema, isDesktopPlatform, parseServerMessage } from '../src/index.js';
+import { ClipSchema, PairRequestSchema, detectSensitive, isDesktopPlatform, parseServerMessage } from '../src/index.js';
 
 const clip = {
   id: '00000000-0000-0000-0000-000000000000',
@@ -33,5 +33,38 @@ describe('protocol', () => {
   it('knows desktop platforms', () => {
     expect(isDesktopPlatform('windows')).toBe(true);
     expect(isDesktopPlatform('android')).toBe(false);
+  });
+});
+
+describe('detectSensitive', () => {
+  it.each([
+    ['482913', 'code'],
+    ['482 913', 'code'],
+    ['4111 1111 1111 1111', 'card'],
+    ['4111-1111-1111-1111', 'card'],
+    ['P@ssw0rd!', 'password'],
+    ['Tr0ub4dor&3', 'password'],
+    ['xK9#mP2$vL', 'password'],
+    ['Hxkfo2-pidwyc-jemxuz', 'password'],
+  ])('flags %s as %s', (text, kind) => {
+    expect(detectSensitive(text)).toBe(kind);
+  });
+
+  it.each([
+    'hello world',
+    'https://example.com/a?b=1',
+    'someone@example.com',
+    '/Users/karam/file.txt',
+    'C:\\Users\\karam',
+    'getElementById',
+    'my_var2',
+    'Hello-World2',
+    'v1.2.3-beta',
+    'rgba(0,0,0,0.5)',
+    '2026',
+    '4111 1111 1111 1112',
+    'Meet at 10:30 tomorrow',
+  ])('leaves %s alone', (text) => {
+    expect(detectSensitive(text)).toBeNull();
   });
 });

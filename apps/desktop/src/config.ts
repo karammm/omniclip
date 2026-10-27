@@ -21,7 +21,16 @@ export interface Config {
   sendCopiedFiles: boolean;
   /** Where received files are saved; defaults to Downloads/OmniClip. */
   downloadDir?: string;
+  /** Passwords and codes: send and clear after a minute, never send, or treat like any other text. */
+  sensitive: SensitiveMode;
+  /** Global shortcut for the quick-paste picker (Electron accelerator); empty turns it off. */
+  hotkey: string;
+  /** Paste into the front app after picking a clip, not just copy it. */
+  autoPaste: boolean;
 }
+
+export type SensitiveMode = 'expire' | 'skip' | 'off';
+export const DEFAULT_HOTKEY = 'CommandOrControl+Shift+V';
 
 export class ConfigStore {
   private file: string;
@@ -35,7 +44,17 @@ export class ConfigStore {
     } catch {
       // first run
     }
-    this.data = { deviceName: defaultName, credentials: {}, paused: false, filesToClipboard: true, sendCopiedFiles: true, ...data };
+    this.data = {
+      deviceName: defaultName,
+      credentials: {},
+      paused: false,
+      filesToClipboard: true,
+      sendCopiedFiles: true,
+      sensitive: 'expire',
+      hotkey: DEFAULT_HOTKEY,
+      autoPaste: true,
+      ...data,
+    };
     // Macs without a local hostname report names like "Unknown_0e:f6:95:d4:ae:a7"; use the friendly name instead
     if (/^Unknown[_-]/i.test(this.data.deviceName)) this.data.deviceName = defaultName;
   }

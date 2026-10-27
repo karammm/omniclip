@@ -9,7 +9,7 @@ import { Hub } from '../src/hub.js';
 
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'omniclip-hub-'));
 const base = 20000 + Math.floor(Math.random() * 20000);
-const hub = new Hub({ dataDir, portTls: base, portHttp: base + 1 });
+const hub = new Hub({ dataDir, portTls: base, portHttp: base + 1, sensitiveTtlMs: 400 });
 const http = `http://127.0.0.1:${base + 1}`;
 
 async function pair(name: string, platform = 'android'): Promise<PairResponse> {
@@ -42,6 +42,12 @@ function connect(token: string): Promise<{ ws: WebSocket; next: (type: ServerMes
     ws.once('open', () => resolve({ ws, next }));
     ws.once('error', reject);
   });
+}
+
+function close(...conns: { ws: WebSocket }[]): Promise<void> {
+  return Promise.all(conns.map(({ ws }) => new Promise<void>((r) => (ws.readyState === ws.CLOSED ? r() : (ws.once('close', () => r()), ws.close()))))).then(
+    () => new Promise((r) => setTimeout(r, 50)),
+  );
 }
 
 beforeAll(() => hub.start());
@@ -181,4 +187,80 @@ describe('raw uploads', () => {
     const clip = (await res.json()) as { kind: string; size: number; name: string };
     expect(clip).toMatchObject({ kind: 'image', size: 6, name: 'image.png' });
   });
+
+  it('delivers a clip sent to one device only to that device and the sender', async () => {
+    const a = await pair('Sender', 'mac');
+    const b = await pair('Target', 'android');
+    const c = await pair('Bystander', 'ios');
+    const [ca, cb, cc] = await Promise.all([connect(a.token), connect(b.token), connect(c.token)]);
+    await Promise.all([ca.next('hello'), cb.next('hello'), cc.next('hello')]);
+    const seenByBystander: string[] = [];
+    cc.ws.on('message', (raw) => {
+      const m = parseServerMessage(raw.toString());
+      if (m?.type === 'clip:new') seenByBystander.push(m.clip.text ?? '');
+    });
+
+    const res = await fetch(`${http}/api/clips?to=${b.deviceId}`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${a.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'just for you' }),
+    });
+    expect(res.status).toBe(200);
+    const sent = (await res.json()) as { id: string; targetDeviceId: string; targetName: string };
+    expect(sent.targetName).toBe('Target');
+
+    const atTarget = await cb.next('clip:new');
+    const atSender = await ca.next('clip:new');
+    expect(atTarget.type === 'clip:new' && atTarget.clip.text).toBe('just for you');
+    expect(atSender.type === 'clip:new' && atSender.clip.id).toBe(sent.id);
+
+    const list = async (token: string) =>
+      ((await (await fetch(`${http}/api/clips`, { headers: { authorization: `Bearer ${token}` } })).json()) as { id: string }[]).map((x) => x.id);
+    expect(await list(b.token)).toContain(sent.id);
+    expect(await list(c.token)).not.toContain(sent.id);
+    const blob = await fetch(`${http}/api/clips/${sent.id}/blob`, { headers: { authorization: `Bearer ${c.token}` } });
+    expect(blob.status).toBe(404);
+
+    const unknown = await fetch(`${http}/api/clips?to=nope`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${a.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'x' }),
+    });
+    expect(unknown.status).toBe(404);
+    expect(seenByBystander).not.toContain('just for you');
+    await close(ca, cb, cc);
+  });
+
+  it('keeps passwords off disk, refuses to pin them and deletes them when they expire', async () => {
+    const a = await pair('Laptop', 'windows');
+    const conn = await connect(a.token);
+    await conn.next('hello');
+    const post = (text: string, query = '') =>
+      fetch(`${http}/api/clips${query}`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${a.token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text }),
+      }).then((r) => r.json() as Promise<{ id: string; sensitive?: boolean; expiresAt?: number }>);
+
+    const secret = await post('Tr0ub4dor&3');
+    expect(secret.sensitive).toBe(true);
+    expect(secret.expiresAt).toBeGreaterThan(Date.now());
+    expect((await post('plain words')).sensitive).toBeUndefined();
+    expect((await post('Tr0ub4dor&4', '?sensitive=0')).sensitive).toBeUndefined();
+    expect((await post('hello there', '?sensitive=1')).sensitive).toBe(true);
+
+    expect(fs.readFileSync(path.join(dataDir, 'store.json'), 'utf8')).not.toContain('Tr0ub4dor&3');
+    const pin = await fetch(`${http}/api/clips/${secret.id}/pin`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${a.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ pinned: true }),
+    });
+    expect(pin.status).toBe(400);
+
+    const removed = await conn.next('clip:remove');
+    expect(removed.type === 'clip:remove' && removed.id).toBe(secret.id);
+    expect(hub.store.clip(secret.id)).toBeUndefined();
+    await close(conn);
+  });
 });
+
