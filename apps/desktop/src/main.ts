@@ -3,16 +3,33 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { BrowserWindow, ClipboardItem, Menu, Notification, Tray, app, clipboard, dialog, ipcMain, nativeImage, shell, type MenuItemConstructorOptions } from 'electron';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import {
+  BrowserWindow,
+  ClipboardItem,
+  Menu,
+  Notification,
+  Tray,
+  app,
+  clipboard,
+  dialog,
+  globalShortcut,
+  ipcMain,
+  nativeImage,
+  screen,
+  shell,
+  systemPreferences,
+  type MenuItemConstructorOptions,
+} from 'electron';
 import QRCode from 'qrcode';
-import { MAX_TEXT_BYTES, MAX_UPLOAD_BYTES, type Clip, type Device, type Platform } from '@omniclip/protocol';
+import { MAX_TEXT_BYTES, MAX_UPLOAD_BYTES, detectSensitive, type Clip, type Device, type Platform } from '@omniclip/protocol';
 import { Hub, advertise, discover, shutdownMdns, type DiscoveredHub } from '@omniclip/hub';
-import { SyncClient, pairWithHub, probe, type HubAddress } from './client.js';
-import { ConfigStore, type Credential } from './config.js';
+import { SyncClient, pairWithHub, probe, type HubAddress, type SendOptions } from './client.js';
+import { ConfigStore, type Credential, type SensitiveMode } from './config.js';
 import { EchoGuard } from './echoGuard.js';
 import { decideRole, shouldStepDown } from './election.js';
 import { renderPairPage } from './pairPage.js';
+import { renderPickerPage, type PickerItem } from './pickerPage.js';
 import { renderSettingsPage } from './settingsPage.js';
 import { Updater } from './updates.js';
 
@@ -35,6 +52,10 @@ const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
 const AUTO_FILES_MAX = 20;
 const AUTO_FILES_MAX_BYTES = 100 * 1024 * 1024;
 const TAKEOVER_AFTER_MS = 10_000;
+const PASTE_KEY = process.platform === 'darwin' ? '⌘V' : 'Ctrl+V';
+/** Shortcut choices offered in Settings ('' turns the picker shortcut off). */
+const HOTKEYS = ['CommandOrControl+Shift+V', 'CommandOrControl+Alt+V', 'CommandOrControl+Shift+Space', 'Alt+Shift+V', ''];
+const SENSITIVE_MODES: SensitiveMode[] = ['expire', 'skip', 'off'];
 
 if (!app.requestSingleInstanceLock()) app.quit();
 if (process.platform === 'win32') app.setAppUserModelId('com.omniclip.app');
@@ -68,6 +89,8 @@ const state = {
 let tray: Tray | null = null;
 let pairWin: BrowserWindow | null = null;
 let settingsWin: BrowserWindow | null = null;
+let pickerWin: BrowserWindow | null = null;
+let hotkeyError = '';
 let watchdog: NodeJS.Timeout | undefined;
 let booting = false;
 
@@ -80,6 +103,27 @@ function notify(title: string, body: string, onClick?: () => void): void {
   const n = new Notification({ title, body, silent: true });
   if (onClick) n.on('click', onClick);
   n.show();
+}
+
+// Linux has no login-item API; desktops start whatever is in ~/.config/autostart.
+const AUTOSTART_FILE = path.join(os.homedir(), '.config', 'autostart', 'omniclip.desktop');
+
+function openAtLogin(): boolean {
+  if (process.platform === 'linux') return fs.existsSync(AUTOSTART_FILE);
+  return app.getLoginItemSettings().openAtLogin;
+}
+
+function setOpenAtLogin(on: boolean): void {
+  if (process.platform !== 'linux') return app.setLoginItemSettings({ openAtLogin: on });
+  if (!on) return fs.rmSync(AUTOSTART_FILE, { force: true });
+  const exec = process.env.APPIMAGE || process.execPath;
+  fs.mkdirSync(path.dirname(AUTOSTART_FILE), { recursive: true });
+  fs.writeFileSync(AUTOSTART_FILE, `[Desktop Entry]\nType=Application\nName=OmniClip\nExec="${exec}" --autostart\nX-GNOME-Autostart-enabled=true\n`);
+}
+
+function openedAtLogin(): boolean {
+  if (process.platform === 'linux') return process.argv.includes('--autostart');
+  return !!app.getLoginItemSettings().wasOpenedAtLogin;
 }
 
 // ------------------------------------------------------------------ roles
@@ -209,6 +253,15 @@ function attachClient(addr: HubAddress, cred: Credential, networkId: string): vo
     updateTray();
     settingsChanged();
   });
+  client.on('clipRemove', (id) => {
+    const clip = [...state.recent, ...state.pinned].find((c) => c.id === id);
+    state.recent = state.recent.filter((c) => c.id !== id);
+    state.pinned = state.pinned.filter((c) => c.id !== id);
+    updateTray();
+    settingsChanged();
+    // an expired password from another device shouldn't stay pasteable here
+    if (clip?.kind === 'text' && clip.sensitive && clip.sourceDeviceId !== state.deviceId) void clearIfHolding(clip.text ?? '');
+  });
   client.on('devices', (devices) => {
     state.devices = devices;
     updateTray();
@@ -222,7 +275,11 @@ function attachClient(addr: HubAddress, cred: Credential, networkId: string): vo
     state.recent = [clip, ...state.recent.filter((c) => c.id !== clip.id)].slice(0, 50);
     updateTray();
     settingsChanged();
-    if (!cfg.data.paused && clip.sourceDeviceId !== state.deviceId) void applyClip(clip, true);
+    if (cfg.data.paused || clip.sourceDeviceId === state.deviceId) return;
+    void applyClip(clip, true);
+    if (clip.targetDeviceId === state.deviceId && clip.kind !== 'file') {
+      notify(`${clip.sourceName} sent you ${clip.kind === 'image' ? 'an image' : clip.sensitive ? 'a password or code' : 'some text'}`, `It's on your clipboard. Press ${PASTE_KEY} to paste.`);
+    }
   });
   client.on('revoked', () => {
     delete cfg.data.credentials[networkId];
@@ -314,7 +371,9 @@ async function watchTick(): Promise<void> {
     if (snap.kind === 'files') return snap.paths; // uploaded outside the lock below
     try {
       if (snap.kind === 'text') {
-        if (Buffer.byteLength(snap.text) <= MAX_TEXT_BYTES) await client.sendText(snap.text);
+        const sensitive = await sensitiveOption(snap.text);
+        if (sensitive === 'skip') return;
+        if (Buffer.byteLength(snap.text) <= MAX_TEXT_BYTES) await client.sendText(snap.text, { sensitive });
         else await client.sendFile(Buffer.from(snap.text), 'clipboard.txt', 'text/plain', true);
       } else if (snap.png.length <= MAX_IMAGE_BYTES) {
         await client.sendFile(snap.png, 'image.png', 'image/png');
@@ -324,6 +383,37 @@ async function watchTick(): Promise<void> {
     }
   });
   if (files && cfg.data.sendCopiedFiles) await sendCopiedFiles(files);
+}
+
+/** Password managers mark what they copy so clipboard tools can leave it alone. */
+async function isConcealed(): Promise<boolean> {
+  const raw =
+    process.platform === 'darwin' ? ['org.nspasteboard.ConcealedType'] : process.platform === 'win32' ? ['ExcludeClipboardContentFromMonitorProcessing'] : [];
+  try {
+    for (const f of raw) if (await clipboard.has(`electron application/osclipboard;format="${f}"`)) return true;
+    if (process.platform === 'linux' && (await clipboard.has('x-kde-passwordManagerHint'))) return true;
+  } catch {
+    // format checks are best effort
+  }
+  return false;
+}
+
+/** How to send this text under the "Passwords and codes" setting: flagged, not flagged, or not at all. */
+async function sensitiveOption(text: string): Promise<boolean | 'skip'> {
+  if (cfg.data.sensitive === 'off') return false;
+  const secret = detectSensitive(text) !== null || (await isConcealed());
+  if (secret && cfg.data.sensitive === 'skip') return 'skip';
+  return secret;
+}
+
+async function clearIfHolding(text: string): Promise<void> {
+  while (busy) await new Promise((r) => setTimeout(r, 20));
+  await exclusive(async () => {
+    if ((await clipboard.readText()) !== text) return;
+    clipboard.clear();
+    guard.prime(null);
+    log('cleared an expired password or code from the clipboard');
+  });
 }
 
 async function sendCopiedFiles(paths: string[]): Promise<void> {
@@ -362,7 +452,7 @@ async function saveFile(clip: Clip, data: Buffer): Promise<void> {
   fs.mkdirSync(dir, { recursive: true });
   const dest = uniquePath(dir, clip.name ?? 'file');
   fs.writeFileSync(dest, data);
-  const pasteHint = cfg.data.filesToClipboard ? ` Press ${process.platform === 'darwin' ? '⌘V' : 'Ctrl+V'} in a folder to paste it.` : '';
+  const pasteHint = cfg.data.filesToClipboard ? ` Press ${PASTE_KEY} in a folder to paste it.` : '';
   notify(`File from ${clip.sourceName}`, `${path.basename(dest)} saved to ${path.basename(dir)}.${pasteHint}`, () => shell.showItemInFolder(dest));
   if (cfg.data.filesToClipboard) queueFileForClipboard(dest);
 }
@@ -398,8 +488,15 @@ async function writeFilesToClipboard(files: string[]): Promise<void> {
       ),
     );
   } else {
-    const uris = files.map((f) => `file://${encodeURI(f)}`).join('\r\n');
-    await clipboard.write([new ClipboardItem({ 'text/uri-list': new Blob([uris], { type: 'text/uri-list' }) })]);
+    const uris = files.map((f) => pathToFileURL(f).href);
+    const uriList = new Blob([uris.join('\r\n')], { type: 'text/uri-list' });
+    try {
+      // GNOME Files and most Linux file managers paste from this format
+      const gnome = new Blob([`copy\n${uris.join('\n')}`], { type: 'text/plain' });
+      await clipboard.write([new ClipboardItem({ 'text/uri-list': uriList, 'electron application/osclipboard;format="x-special/gnome-copied-files"': gnome })]);
+    } catch {
+      await clipboard.write([new ClipboardItem({ 'text/uri-list': uriList })]);
+    }
   }
 }
 
@@ -437,7 +534,7 @@ const MIME: Record<string, string> = {
   '.pdf': 'application/pdf', '.txt': 'text/plain', '.zip': 'application/zip', '.mp4': 'video/mp4', '.mov': 'video/quicktime',
 };
 
-async function sendPaths(paths: string[]): Promise<void> {
+async function sendPaths(paths: string[], to?: string): Promise<void> {
   const client = state.client;
   if (!client) return;
   for (const p of paths) {
@@ -449,12 +546,213 @@ async function sendPaths(paths: string[]): Promise<void> {
         continue;
       }
       const mime = MIME[path.extname(p).toLowerCase()] ?? 'application/octet-stream';
-      await client.sendFile(fs.readFileSync(p), path.basename(p), mime, true);
+      await client.sendFile(fs.readFileSync(p), path.basename(p), mime, true, { to });
     } catch (err) {
       notify('OmniClip', `Could not send ${path.basename(p)}: ${String(err)}`);
     }
   }
 }
+
+// ------------------------------------------------------------------ send to one device
+
+function otherDevices(): Device[] {
+  return state.devices.filter((d) => d.id !== state.deviceId);
+}
+
+function deviceByIdOrThrow(id: string): Device {
+  const d = state.devices.find((x) => x.id === id);
+  if (!d) throw new Error('That device is no longer paired.');
+  return d;
+}
+
+/** Sends whatever is on this computer's clipboard to one device. */
+async function sendClipboardTo(device: Device): Promise<void> {
+  const client = connectedClient();
+  const snap = await snapshot(true);
+  if (!snap) throw new Error('The clipboard is empty.');
+  const to = device.id;
+  if (snap.kind === 'files') await sendPaths(snap.paths, to);
+  else if (snap.kind === 'image') await client.sendFile(snap.png, 'image.png', 'image/png', false, { to });
+  else {
+    const sensitive = await sensitiveOption(snap.text);
+    if (sensitive === 'skip') throw new Error('That looks like a password or code, and Settings say never to send those.');
+    await client.sendText(snap.text, { to, sensitive });
+  }
+  notify('OmniClip', `Sent your clipboard to ${device.name}`);
+}
+
+/** Sends a clip from the history to one device. */
+async function resendClip(clip: Clip, device: Device): Promise<void> {
+  const client = connectedClient();
+  const opts: SendOptions = { to: device.id };
+  if (clip.kind === 'text') await client.sendText(clip.text ?? '', { ...opts, sensitive: !!clip.sensitive });
+  else await client.sendFile(await client.fetchBlob(clip), clip.name ?? 'file', clip.mime, clip.kind === 'file', opts);
+  notify('OmniClip', `Sent to ${device.name}`);
+}
+
+async function chooseAndSendFiles(device?: Device): Promise<void> {
+  const res = await dialog.showOpenDialog({ title: device ? `Send to ${device.name}` : 'Send to all devices', properties: ['openFile', 'multiSelections'] });
+  if (!res.canceled) await sendPaths(res.filePaths, device?.id);
+}
+
+function deviceLabel(d: Device): string {
+  return `${d.online ? '●' : '○'}  ${d.name}`;
+}
+
+// ------------------------------------------------------------------ quick paste
+
+function acceleratorLabel(acc: string): string {
+  if (!acc) return 'Off';
+  if (process.platform !== 'darwin') return acc.replace('CommandOrControl', 'Ctrl');
+  return acc.replace('CommandOrControl', '⌘').replace('Alt', '⌥').replace('Shift', '⇧').replace('Space', 'Space').replace(/\+/g, '');
+}
+
+function registerHotkey(): void {
+  globalShortcut.unregisterAll();
+  hotkeyError = '';
+  const acc = cfg.data.hotkey;
+  if (!acc) return;
+  try {
+    if (!globalShortcut.register(acc, () => void openPicker())) hotkeyError = `${acceleratorLabel(acc)} is used by another app. Pick a different shortcut.`;
+  } catch (err) {
+    hotkeyError = String(err);
+  }
+  if (hotkeyError) log(hotkeyError);
+}
+
+function secretLabel(c: Clip): string {
+  const kind = detectSensitive(c.text ?? '');
+  return `•••••••• (${kind === 'code' ? 'code' : kind === 'card' ? 'card number' : 'password'}, hidden)`;
+}
+
+function sourceLabel(c: Clip): string {
+  const from = c.sourceDeviceId === state.deviceId ? 'This computer' : c.sourceName;
+  return c.targetName ? `${from} → ${c.targetDeviceId === state.deviceId ? 'you' : c.targetName}` : from;
+}
+
+function pickerItem(c: Clip): PickerItem {
+  const label = c.kind !== 'text' ? (c.name ?? c.kind) : c.sensitive ? secretLabel(c) : (c.text ?? '').replace(/\s+/g, ' ').trim().slice(0, 200);
+  return { id: c.id, kind: c.kind, label, source: sourceLabel(c), createdAt: c.createdAt, pinned: !!c.pinned, sensitive: !!c.sensitive };
+}
+
+async function pickerClips(query: string): Promise<Clip[]> {
+  const q = query.trim().toLowerCase();
+  const local = [...state.pinned, ...state.recent].filter((c, i, all) => all.findIndex((x) => x.id === c.id) === i);
+  if (!q) return local.slice(0, 50);
+  if (state.client?.status === 'online') {
+    try {
+      return await state.client.search(q, 50);
+    } catch {
+      // fall back to what this computer already has
+    }
+  }
+  return local.filter((c) => !c.sensitive && ((c.text ?? '').toLowerCase().includes(q) || (c.name ?? '').toLowerCase().includes(q)));
+}
+
+async function openPicker(): Promise<void> {
+  if (!pickerWin || pickerWin.isDestroyed()) {
+    pickerWin = new BrowserWindow({
+      width: 420,
+      height: 440,
+      frame: false,
+      resizable: false,
+      show: false,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      fullscreenable: false,
+      minimizable: false,
+      maximizable: false,
+      transparent: process.platform === 'darwin',
+      webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false },
+    });
+    pickerWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    pickerWin.on('blur', () => pickerWin?.hide());
+    pickerWin.on('closed', () => (pickerWin = null));
+    await pickerWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(renderPickerPage())}`);
+  }
+  // open next to the mouse, kept inside the screen it's on
+  const cursor = screen.getCursorScreenPoint();
+  const area = screen.getDisplayNearestPoint(cursor).workArea;
+  const [w, h] = pickerWin.getSize() as [number, number];
+  const x = Math.min(Math.max(cursor.x - 24, area.x + 8), area.x + area.width - w - 8);
+  const below = cursor.y + 16;
+  const y = below + h <= area.y + area.height ? below : Math.max(area.y + 8, cursor.y - h - 16);
+  pickerWin.setPosition(Math.round(x), Math.round(y));
+  pickerWin.show();
+  pickerWin.focus();
+  if (process.platform === 'darwin') app.focus({ steal: true });
+  pickerWin.webContents.send('picker:show');
+}
+
+/** Hides the picker and hands the keyboard back to the app the user was in. */
+function closePicker(): void {
+  if (!pickerWin?.isVisible()) return;
+  pickerWin.hide();
+  const othersOpen = [pairWin, settingsWin].some((w) => w && !w.isDestroyed() && w.isVisible());
+  if (process.platform === 'darwin' && !othersOpen) app.hide();
+}
+
+let askedForAccessibility = false;
+
+function run(cmd: string, args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => execFile(cmd, args, { timeout: 5000, windowsHide: true }, (err) => (err ? reject(err) : resolve())));
+}
+
+// macOS: post ⌘V through Core Graphics (needs Accessibility, but not control of System Events)
+const MAC_PASTE = `ObjC.import('CoreGraphics');
+var src = $.CGEventSourceCreate($.kCGEventSourceStateHIDSystemState);
+[true, false].forEach(function (down) {
+  var e = $.CGEventCreateKeyboardEvent(src, 9, down);
+  $.CGEventSetFlags(e, $.kCGEventFlagMaskCommand);
+  $.CGEventPost($.kCGHIDEventTap, e);
+});`;
+
+/** Presses ⌘V / Ctrl+V in the front app. Falls back to a hint when the OS doesn't allow it. */
+async function pasteIntoFrontApp(): Promise<void> {
+  try {
+    if (process.platform === 'darwin') {
+      if (!systemPreferences.isTrustedAccessibilityClient(false)) {
+        // shows the macOS prompt that leads to Privacy & Security → Accessibility (once per run)
+        if (!askedForAccessibility) systemPreferences.isTrustedAccessibilityClient(true);
+        askedForAccessibility = true;
+        throw new Error('not trusted');
+      }
+      await run('osascript', ['-l', 'JavaScript', '-e', MAC_PASTE]);
+    } else if (process.platform === 'win32') {
+      await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', "(New-Object -ComObject WScript.Shell).SendKeys('^v')"]);
+    } else {
+      await run('xdotool', ['key', '--clearmodifiers', 'ctrl+v']).catch(() => run('wtype', ['-M', 'ctrl', 'v', '-m', 'ctrl']));
+    }
+  } catch {
+    const how =
+      process.platform === 'darwin'
+        ? ' To paste automatically, allow OmniClip in System Settings → Privacy & Security → Accessibility.'
+        : process.platform === 'linux'
+          ? ' To paste automatically, install xdotool (X11) or wtype (Wayland).'
+          : '';
+    notify('OmniClip', `Copied. Press ${PASTE_KEY} to paste.${how}`);
+  }
+}
+
+ipcMain.handle('picker:list', async (_e, query: string) => {
+  const items = (await pickerClips(String(query ?? ''))).map(pickerItem);
+  const action = cfg.data.autoPaste ? 'paste' : 'copy';
+  const hint = state.client?.status === 'online' ? `↑↓ choose · Enter to ${action} · Esc to close` : 'Offline: showing clips this computer already has';
+  return { items, hint };
+});
+ipcMain.handle('picker:choose', async (_e, id: string) => {
+  const clip = await findClip(String(id));
+  closePicker();
+  await applyClip(clip, true);
+  // files are saved and put on the clipboard; pasting them blindly could drop them anywhere
+  if (clip.kind === 'file' || !cfg.data.autoPaste) {
+    if (clip.kind !== 'file') notify('OmniClip', `Copied. Press ${PASTE_KEY} to paste.`);
+    return;
+  }
+  await new Promise((r) => setTimeout(r, process.platform === 'darwin' ? 200 : 120));
+  await pasteIntoFrontApp();
+});
+ipcMain.handle('picker:close', () => closePicker());
 
 // ------------------------------------------------------------------ pairing window
 
@@ -530,9 +828,9 @@ function stateLabel(): string {
 }
 
 function clipLabel(c: Clip): string {
-  const src = c.sourceDeviceId === state.deviceId ? 'this computer' : c.sourceName;
+  const src = sourceLabel(c);
   if (c.kind === 'text') {
-    const t = (c.text ?? '').replace(/\s+/g, ' ').trim();
+    const t = c.sensitive ? secretLabel(c) : (c.text ?? '').replace(/\s+/g, ' ').trim();
     return `${t.length > 42 ? `${t.slice(0, 42)}…` : t}   (${src})`;
   }
   return `${c.kind === 'image' ? '🖼' : '📄'} ${c.name ?? c.kind}   (${src})`;
@@ -580,11 +878,16 @@ function settingsState() {
     paused: cfg.data.paused,
     sendCopiedFiles: cfg.data.sendCopiedFiles,
     filesToClipboard: cfg.data.filesToClipboard,
-    openAtLogin: app.getLoginItemSettings().openAtLogin,
+    openAtLogin: openAtLogin(),
     downloadDir: downloadDir(),
     update: updater.available,
-    fileManager: process.platform === 'darwin' ? 'Finder' : 'Explorer',
-    pasteKey: process.platform === 'darwin' ? '⌘V' : 'Ctrl+V',
+    fileManager: process.platform === 'darwin' ? 'Finder' : process.platform === 'win32' ? 'Explorer' : 'your file manager',
+    pasteKey: PASTE_KEY,
+    sensitive: cfg.data.sensitive,
+    hotkey: cfg.data.hotkey,
+    hotkeys: HOTKEYS.map((value) => ({ value, label: acceleratorLabel(value) })),
+    hotkeyError,
+    autoPaste: cfg.data.autoPaste,
   };
 }
 
@@ -605,8 +908,14 @@ async function findClip(id: string): Promise<Clip> {
 ipcMain.handle('settings:get', () => settingsState());
 ipcMain.handle('settings:set', (_e, key: string, value: unknown) => {
   const on = !!value;
-  if (key === 'openAtLogin') app.setLoginItemSettings({ openAtLogin: on });
-  else if (key === 'paused' || key === 'sendCopiedFiles' || key === 'filesToClipboard') {
+  if (key === 'openAtLogin') setOpenAtLogin(on);
+  else if (key === 'hotkey' || key === 'sensitive') {
+    if (key === 'hotkey' && HOTKEYS.includes(String(value))) cfg.data.hotkey = String(value);
+    else if (key === 'sensitive' && SENSITIVE_MODES.includes(value as SensitiveMode)) cfg.data.sensitive = value as SensitiveMode;
+    else throw new Error(`bad value for ${key}`);
+    cfg.save();
+    if (key === 'hotkey') registerHotkey();
+  } else if (key === 'paused' || key === 'sendCopiedFiles' || key === 'filesToClipboard' || key === 'autoPaste') {
     cfg.data[key] = on;
     cfg.save();
     // don't flush whatever was copied while paused
@@ -648,6 +957,20 @@ ipcMain.handle('settings:search', (_e, query: string) => connectedClient().searc
 ipcMain.handle('settings:pin', (_e, id: string, pinned: boolean) => connectedClient().setPinned(id, !!pinned));
 ipcMain.handle('settings:copy', async (_e, id: string) => applyClip(await findClip(id), false));
 ipcMain.handle('settings:pair', () => openPairWindow());
+ipcMain.handle('settings:sendClipboardTo', (_e, deviceId: string) => sendClipboardTo(deviceByIdOrThrow(String(deviceId))));
+// pops a native menu of devices under the mouse; resolves once one is picked (or the menu is dismissed)
+ipcMain.handle('settings:sendTo', async (_e, clipId: string) => {
+  const clip = await findClip(String(clipId));
+  const others = otherDevices();
+  if (!others.length) throw new Error('There are no other devices to send to.');
+  await new Promise<void>((resolve, reject) => {
+    const menu = Menu.buildFromTemplate([
+      { label: 'Send to', enabled: false },
+      ...others.map((d) => ({ label: deviceLabel(d), click: () => resendClip(clip, d).then(resolve, reject) })),
+    ]);
+    menu.popup({ window: settingsWin ?? undefined, callback: () => setTimeout(resolve, 0) });
+  });
+});
 ipcMain.handle('settings:checkUpdates', async () => {
   if (updater.available) return updater.install();
   const found = await updater.check();
@@ -698,12 +1021,27 @@ function updateTray(): void {
       ],
     },
     {
-      label: 'Send file…',
+      label: 'Quick paste…',
+      accelerator: cfg.data.hotkey || undefined,
+      registerAccelerator: false,
+      click: () => void openPicker(),
+    },
+    {
+      label: 'Send clipboard to',
+      enabled: connected && otherDevices().length > 0,
+      submenu: otherDevices().map((d) => ({
+        label: deviceLabel(d),
+        click: () => sendClipboardTo(d).catch((err) => notify('OmniClip', err instanceof Error ? err.message : String(err))),
+      })),
+    },
+    {
+      label: 'Send file',
       enabled: connected,
-      click: async () => {
-        const res = await dialog.showOpenDialog({ properties: ['openFile', 'multiSelections'] });
-        if (!res.canceled) await sendPaths(res.filePaths);
-      },
+      submenu: [
+        { label: 'To all devices…', click: () => void chooseAndSendFiles() },
+        ...(otherDevices().length ? [{ type: 'separator' as const }] : []),
+        ...otherDevices().map((d) => ({ label: `To ${d.name}…`, click: () => void chooseAndSendFiles(d) })),
+      ],
     },
     { type: 'separator' },
     {
@@ -722,8 +1060,8 @@ function updateTray(): void {
     {
       label: 'Open at login',
       type: 'checkbox',
-      checked: app.getLoginItemSettings().openAtLogin,
-      click: (item) => app.setLoginItemSettings({ openAtLogin: item.checked }),
+      checked: openAtLogin(),
+      click: (item) => setOpenAtLogin(item.checked),
     },
     { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: () => void openSettings() },
     {
@@ -765,7 +1103,7 @@ function createTray(): void {
 
 // ------------------------------------------------------------------ lifecycle
 
-app.on('second-instance', () => void openPairWindow());
+app.on('second-instance', () => openPairWindow().catch((err) => log(`could not open the window: ${String(err)}`)));
 app.on('window-all-closed', () => {
   // tray app: keep running
 });
@@ -782,12 +1120,13 @@ app.whenReady().then(async () => {
     );
   });
   updater.start();
+  registerHotkey();
   guard.prime((await snapshot(true))?.fp ?? null);
   setInterval(() => void watchTick(), 500);
   await boot();
   // The tray icon can be hidden (MacBook notch, menu bar settings), so show a window on a manual launch.
-  if (!app.getLoginItemSettings().wasOpenedAtLogin) await openPairWindow();
-});
+  if (!openedAtLogin()) await openPairWindow();
+}).catch((err) => log(`startup failed: ${String(err)}`));
 
 let quitting = false;
 app.on('before-quit', (e) => {
@@ -795,6 +1134,7 @@ app.on('before-quit', (e) => {
   e.preventDefault();
   quitting = true;
   void (async () => {
+    globalShortcut.unregisterAll();
     await teardown();
     await shutdownMdns();
     app.exit(0);

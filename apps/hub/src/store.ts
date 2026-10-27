@@ -14,6 +14,11 @@ export interface StoreLimits {
   blobBudgetBytes: number;
 }
 
+/** Clips sent to one device are only visible to that device and the sender. */
+export function visibleTo(clip: Clip, deviceId?: string): boolean {
+  return !deviceId || !clip.targetDeviceId || clip.targetDeviceId === deviceId || clip.sourceDeviceId === deviceId;
+}
+
 export function hashToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
@@ -58,7 +63,8 @@ export class Store {
 
   private save(): void {
     const tmp = `${this.file}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(this.data));
+    // passwords and codes stay in memory only
+    fs.writeFileSync(tmp, JSON.stringify({ ...this.data, clips: this.data.clips.filter((c) => !c.sensitive) }));
     fs.renameSync(tmp, this.file);
   }
 
@@ -104,23 +110,36 @@ export class Store {
 
   // ---- clips ----
 
-  clips(limit = this.limits.historyLimit): Clip[] {
-    return this.data.clips.slice(0, limit);
+  /** Newest first. With `viewer`, only the clips that device may see. */
+  clips(limit = this.limits.historyLimit, viewer?: string): Clip[] {
+    return this.data.clips.filter((c) => visibleTo(c, viewer)).slice(0, limit);
   }
 
-  clip(id: string): Clip | undefined {
-    return this.data.clips.find((c) => c.id === id);
+  clip(id: string, viewer?: string): Clip | undefined {
+    const c = this.data.clips.find((x) => x.id === id);
+    return c && visibleTo(c, viewer) ? c : undefined;
   }
 
-  pinnedClips(): Clip[] {
-    return this.data.clips.filter((c) => c.pinned);
+  pinnedClips(viewer?: string): Clip[] {
+    return this.data.clips.filter((c) => c.pinned && visibleTo(c, viewer));
   }
 
-  /** Case-insensitive search over text and file names, newest first. */
-  search(query: string, limit = this.limits.historyLimit): Clip[] {
+  /** Case-insensitive search over text and file names, newest first. Sensitive clips never match. */
+  search(query: string, limit = this.limits.historyLimit, viewer?: string): Clip[] {
     const q = query.trim().toLowerCase();
-    if (!q) return this.clips(limit);
-    return this.data.clips.filter((c) => (c.text ?? '').toLowerCase().includes(q) || (c.name ?? '').toLowerCase().includes(q)).slice(0, limit);
+    if (!q) return this.clips(limit, viewer);
+    return this.data.clips
+      .filter((c) => visibleTo(c, viewer) && !c.sensitive && ((c.text ?? '').toLowerCase().includes(q) || (c.name ?? '').toLowerCase().includes(q)))
+      .slice(0, limit);
+  }
+
+  removeClip(id: string): Clip | undefined {
+    const c = this.clip(id);
+    if (!c) return undefined;
+    this.data.clips = this.data.clips.filter((x) => x.id !== id);
+    if (c.kind !== 'text') fs.rmSync(this.blobPath(c.id), { force: true });
+    if (!c.sensitive) this.save();
+    return c;
   }
 
   setPinned(id: string, pinned: boolean): Clip | undefined {
@@ -142,7 +161,7 @@ export class Store {
   addClip(clip: Clip): string[] {
     this.data.clips.unshift(clip);
     const pruned = this.prune();
-    this.save();
+    if (!clip.sensitive || pruned.length) this.save();
     return pruned;
   }
 

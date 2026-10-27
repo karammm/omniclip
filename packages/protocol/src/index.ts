@@ -9,6 +9,8 @@ export const MAX_TEXT_BYTES = 1024 * 1024;
 export const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
 export const HISTORY_LIMIT = 200;
 export const BLOB_BUDGET_BYTES = 1024 * 1024 * 1024;
+/** Passwords and codes live this long, then the hub deletes them everywhere. */
+export const SENSITIVE_TTL_MS = 60_000;
 
 export const PlatformSchema = z.enum(['mac', 'windows', 'linux', 'ios', 'ipados', 'android', 'web', 'shortcut']);
 export type Platform = z.infer<typeof PlatformSchema>;
@@ -32,6 +34,12 @@ export const ClipSchema = z.object({
   createdAt: z.number(),
   /** Pinned clips are kept at the top and never pruned. */
   pinned: z.boolean().optional(),
+  /** Sent to one device only (the sender sees it too). */
+  targetDeviceId: z.string().optional(),
+  targetName: z.string().optional(),
+  /** Looks like a password, code or card number: never written to disk, deleted at `expiresAt`. */
+  sensitive: z.boolean().optional(),
+  expiresAt: z.number().optional(),
 });
 export type Clip = z.infer<typeof ClipSchema>;
 
@@ -101,6 +109,8 @@ export const ServerMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('clip:new'), clip: ClipSchema }),
   /** A clip changed (pinned or unpinned). */
   z.object({ type: z.literal('clip:update'), clip: ClipSchema }),
+  /** A clip was deleted (a password or code that expired). */
+  z.object({ type: z.literal('clip:remove'), id: z.string() }),
   z.object({ type: z.literal('devices'), devices: z.array(DeviceSchema) }),
   /** Sent only to desktop devices so another desktop can take over as hub. */
   z.object({ type: z.literal('registry'), registry: RegistrySchema }),
@@ -123,4 +133,39 @@ export function parseServerMessage(raw: string): ServerMessage | null {
   } catch {
     return null;
   }
+}
+
+export type SensitiveKind = 'code' | 'card' | 'password';
+
+function luhn(digits: string): boolean {
+  let sum = 0;
+  for (let i = 0; i < digits.length; i++) {
+    let d = Number(digits[digits.length - 1 - i]);
+    if (i % 2 === 1 && (d *= 2) > 9) d -= 9;
+    sum += d;
+  }
+  return sum % 10 === 0;
+}
+
+/**
+ * Best-effort guess at whether copied text is a secret: a one-time code, a card number or a
+ * password. It errs towards ordinary text; password managers also mark their copies explicitly.
+ */
+export function detectSensitive(text: string): SensitiveKind | null {
+  const t = text.trim();
+  if (!t || t.length > 64) return null;
+  if (/^(\d{6,8}|\d{3}[- ]\d{3})$/.test(t)) return 'code';
+  if (/^[\d -]+$/.test(t)) {
+    const digits = t.replace(/[ -]/g, '');
+    return digits.length >= 13 && digits.length <= 19 && luhn(digits) ? 'card' : null;
+  }
+  if (t.length < 8 || /\s/.test(t)) return null;
+  // links, e-mail addresses, paths and code like rgba(0,0,0,.5)
+  if (/^[a-z][a-z0-9+.-]*:|^www\.|^[~./\\$]|[/\\]|^\w+\(.*\)$/i.test(t) || /^[^@]+@[^@]+\.[a-z]{2,}$/i.test(t)) return null;
+  const classes = [/[a-z]/, /[A-Z]/, /\d/, /[^A-Za-z0-9]/].filter((r) => r.test(t)).length;
+  // identifiers and versions (my_var2, Hello-World2, v1.2.3-beta) mix character kinds too
+  const identifier = /^[A-Za-z][A-Za-z0-9]*([_.-][A-Za-z0-9]+)*$/.test(t);
+  if (classes === 4 && (!identifier || t.length >= 16)) return 'password';
+  if (classes === 3 && !identifier) return 'password';
+  return null;
 }

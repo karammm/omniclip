@@ -74,6 +74,21 @@ export async function pairWithHub(addr: HubAddress, code: string, name: string, 
   return pairRes;
 }
 
+export interface SendOptions {
+  /** Device id to send to; everyone when omitted. */
+  to?: string;
+  /** Force (true) or skip (false) the hub's password detection. */
+  sensitive?: boolean;
+}
+
+function clipsPath(opts: SendOptions = {}): string {
+  const q = new URLSearchParams();
+  if (opts.to) q.set('to', opts.to);
+  if (opts.sensitive !== undefined) q.set('sensitive', opts.sensitive ? '1' : '0');
+  const qs = q.toString();
+  return qs ? `/api/clips?${qs}` : '/api/clips';
+}
+
 export type ClientStatus = 'connecting' | 'online' | 'offline';
 
 export interface SyncClientEvents {
@@ -81,6 +96,7 @@ export interface SyncClientEvents {
   hello: [{ deviceId: string; hubDeviceId: string; history: Clip[]; pinned: Clip[]; devices: Device[] }];
   clip: [Clip];
   clipUpdate: [Clip];
+  clipRemove: [string];
   devices: [Device[]];
   registry: [Registry];
   revoked: [];
@@ -149,6 +165,7 @@ export class SyncClient extends EventEmitter<SyncClientEvents> {
       if (msg.type === 'hello') this.emit('hello', { deviceId: msg.deviceId, hubDeviceId: msg.hubDeviceId, history: msg.history, pinned: msg.pinned ?? [], devices: msg.devices });
       else if (msg.type === 'clip:new') this.emit('clip', msg.clip);
       else if (msg.type === 'clip:update') this.emit('clipUpdate', msg.clip);
+      else if (msg.type === 'clip:remove') this.emit('clipRemove', msg.id);
       else if (msg.type === 'devices') this.emit('devices', msg.devices);
       else if (msg.type === 'registry') this.emit('registry', msg.registry);
       else if (msg.type === 'revoked') {
@@ -178,8 +195,8 @@ export class SyncClient extends EventEmitter<SyncClientEvents> {
     return { authorization: `Bearer ${this.token}` };
   }
 
-  async sendText(text: string): Promise<void> {
-    const res = await request(this.addr, '/api/clips', {
+  async sendText(text: string, opts?: SendOptions): Promise<void> {
+    const res = await request(this.addr, clipsPath(opts), {
       method: 'POST',
       ca: this.caPem,
       headers: { ...this.auth(), 'content-type': 'application/json' },
@@ -188,7 +205,7 @@ export class SyncClient extends EventEmitter<SyncClientEvents> {
     if (res.status !== 200) throw new Error(`send failed (${res.status})`);
   }
 
-  async sendFile(data: Buffer, name: string, mime: string, asFile = false): Promise<void> {
+  async sendFile(data: Buffer, name: string, mime: string, asFile = false, opts?: SendOptions): Promise<void> {
     const boundary = `----omniclip${crypto.randomBytes(12).toString('hex')}`;
     const parts: Buffer[] = [];
     if (asFile) parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="kind"\r\n\r\nfile\r\n`));
@@ -199,7 +216,7 @@ export class SyncClient extends EventEmitter<SyncClientEvents> {
       Buffer.from(`\r\n--${boundary}--\r\n`),
     );
     const body = Buffer.concat(parts);
-    const res = await request(this.addr, '/api/clips', {
+    const res = await request(this.addr, clipsPath(opts), {
       method: 'POST',
       ca: this.caPem,
       headers: { ...this.auth(), 'content-type': `multipart/form-data; boundary=${boundary}`, 'content-length': body.length },
