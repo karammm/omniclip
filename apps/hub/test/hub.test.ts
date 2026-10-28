@@ -262,5 +262,38 @@ describe('raw uploads', () => {
     expect(hub.store.clip(secret.id)).toBeUndefined();
     await close(conn);
   });
-});
 
+  it('keeps formatting with text, but not with passwords', async () => {
+    const mac = await pair('Rich Mac', 'mac');
+    const post = async (body: object) =>
+      (await (
+        await fetch(`${http}/api/clips`, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${mac.token}`, 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+      ).json()) as { html?: string; rtf?: string; sensitive?: boolean };
+    const rich = await post({ text: 'hello bold', html: '<b>hello</b> bold', rtf: '{\\rtf1 {\\b hello} bold}' });
+    expect(rich.html).toBe('<b>hello</b> bold');
+    expect(rich.rtf).toContain('rtf1');
+    const secret = await post({ text: 'Tr0ub4dor&3xyz', html: '<span>Tr0ub4dor&amp;3xyz</span>' });
+    expect(secret.sensitive).toBe(true);
+    expect(secret.html).toBeUndefined();
+  });
+
+  it('marks a zip uploaded as a folder', async () => {
+    const mac = await pair('Folder Mac', 'mac');
+    const upload = async (mime: string, name: string) => {
+      const form = new FormData();
+      form.append('kind', 'file');
+      form.append('folder', '1');
+      form.append('file', new Blob([new Uint8Array([80, 75, 5, 6])], { type: mime }), name);
+      return (await (await fetch(`${http}/api/clips`, { method: 'POST', headers: { authorization: `Bearer ${mac.token}` }, body: form })).json()) as {
+        kind: string;
+        folder?: boolean;
+      };
+    };
+    expect(await upload('application/zip', 'Photos.zip')).toMatchObject({ kind: 'file', folder: true });
+    expect((await upload('text/plain', 'notes.txt')).folder).toBeUndefined();
+  });
+});

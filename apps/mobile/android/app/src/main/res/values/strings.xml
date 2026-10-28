@@ -4,4 +4,9 @@
     <string name="title_activity_main">OmniClip</string>
     <string name="package_name">com.omniclip.app</string>
     <string name="custom_url_scheme">com.omniclip.app</string>
+    <string name="tile_label">Send clipboard</string>
+    <string name="widget_label">OmniClip: send clipboard</string>
+    <string name="widget_send">Send clipboard</string>
+    <string name="widget_open">Open OmniClip</string>
+    <string name="widget_description">Send what you copied to your other devices with one tap.</string>
 </resources>

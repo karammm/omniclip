@@ -17,8 +17,19 @@ export interface Config {
   paused: boolean;
   /** Put files that arrive from other devices on the clipboard, ready to paste in Finder/Explorer. */
   filesToClipboard: boolean;
-  /** Send files copied in Finder/Explorer to other devices. */
+  /** Send files and folders copied in Finder/Explorer to other devices. */
   sendCopiedFiles: boolean;
+  /** Send copied text / images automatically. */
+  sendText: boolean;
+  sendImages: boolean;
+  /** Send the formatting (HTML/RTF) along with copied text. */
+  sendFormatting: boolean;
+  /** Put text and images from other devices on the clipboard, and save their files. Clips sent to this computer alone always apply. */
+  receiveText: boolean;
+  receiveImages: boolean;
+  receiveFiles: boolean;
+  /** Copies made while one of these apps is in front are never sent. */
+  ignoredApps: string[];
   /** Where received files are saved; defaults to Downloads/OmniClip. */
   downloadDir?: string;
   /** Passwords and codes: send and clear after a minute, never send, or treat like any other text. */
@@ -50,6 +61,13 @@ export class ConfigStore {
       paused: false,
       filesToClipboard: true,
       sendCopiedFiles: true,
+      sendText: true,
+      sendImages: true,
+      sendFormatting: true,
+      receiveText: true,
+      receiveImages: true,
+      receiveFiles: true,
+      ignoredApps: [],
       sensitive: 'expire',
       hotkey: DEFAULT_HOTKEY,
       autoPaste: true,

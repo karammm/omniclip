@@ -6,6 +6,8 @@ export const MDNS_TYPE = 'omniclip';
 export const PROTOCOL_VERSION = 1;
 
 export const MAX_TEXT_BYTES = 1024 * 1024;
+/** Formatting (HTML or RTF) bigger than this is dropped and the plain text is sent alone. */
+export const MAX_RICH_BYTES = 2 * 1024 * 1024;
 export const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
 export const HISTORY_LIMIT = 200;
 export const BLOB_BUDGET_BYTES = 1024 * 1024 * 1024;
@@ -23,10 +25,15 @@ export const ClipSchema = z.object({
   kind: ClipKindSchema,
   /** Inline content for text clips. */
   text: z.string().optional(),
+  /** Formatting copied along with the text, so it pastes with fonts and links on other computers. */
+  html: z.string().optional(),
+  rtf: z.string().optional(),
   mime: z.string(),
   size: z.number().int().nonnegative(),
   /** Original filename for file/image clips. */
   name: z.string().optional(),
+  /** A zipped folder: computers unpack it, phones get the .zip. */
+  folder: z.boolean().optional(),
   /** sha256 of the content; used by desktops to avoid echo loops. */
   hash: z.string(),
   sourceDeviceId: z.string(),
@@ -87,6 +94,8 @@ export type PairResponse = z.infer<typeof PairResponseSchema>;
 
 export const TextClipRequestSchema = z.object({
   text: z.string().min(1),
+  html: z.string().optional(),
+  rtf: z.string().optional(),
 });
 
 export const PinRequestSchema = z.object({ pinned: z.boolean() });

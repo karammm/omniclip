@@ -10,6 +10,7 @@ export interface PickerItem {
   createdAt: number;
   pinned: boolean;
   sensitive: boolean;
+  folder: boolean;
 }
 
 const STYLE = `
@@ -66,7 +67,7 @@ function render() {
     body.className = 'body';
     const label = document.createElement('div');
     label.className = 'label';
-    label.textContent = (it.pinned ? '📌 ' : '') + (it.kind === 'image' ? '🖼 ' : it.kind === 'file' ? '📄 ' : '') + it.label;
+    label.textContent = (it.pinned ? '📌 ' : '') + (it.kind === 'image' ? '🖼 ' : it.kind === 'file' ? (it.folder ? '📁 ' : '📄 ') : '') + it.label;
     const meta = document.createElement('div');
     meta.className = 'meta';
     meta.textContent = it.source + ' · ' + ago(it.createdAt);

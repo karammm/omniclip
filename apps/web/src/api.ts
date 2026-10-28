@@ -85,8 +85,9 @@ function clipsPath(to?: string): string {
   return to ? `/api/clips?to=${encodeURIComponent(to)}` : '/api/clips';
 }
 
-export function sendText(token: string, text: string, to?: string): Promise<Clip> {
-  return call(clipsPath(to), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text }) }, token);
+/** `html`: the text's formatting, so it pastes with fonts and links on computers. */
+export function sendText(token: string, text: string, to?: string, html?: string): Promise<Clip> {
+  return call(clipsPath(to), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(html ? { text, html } : { text }) }, token);
 }
 
 export function sendFile(token: string, file: Blob, name: string, kind?: 'file', to?: string): Promise<Clip> {

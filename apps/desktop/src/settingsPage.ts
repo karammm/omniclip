@@ -1,4 +1,4 @@
-// The desktop Settings window: general options, devices and searchable history.
+// The desktop Settings window: general options, sync rules, devices and searchable history.
 // Rendered as a self-contained page; it talks to the main process through window.omniclip.settings (preload.ts).
 // Clip text is untrusted (it comes from other devices), so the script only ever uses textContent.
 
@@ -36,6 +36,8 @@ button:disabled { opacity:.5; cursor:default; }
 .pin { color:#d97706; }
 .empty { color:var(--muted); text-align:center; padding:16px; }
 .path { font-size:12px; color:var(--muted); word-break:break-all; }
+.chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+.chip { font:inherit; font-size:12px; padding:4px 10px; border-radius:999px; border:1px dashed var(--border); background:none; color:var(--text); cursor:pointer; }
 `;
 
 const SCRIPT = `
@@ -110,11 +112,11 @@ function renderGeneral() {
       el('div', { class: 'muted small' }, 'Name shown on your other devices'),
       el('div', { class: 'row', style: 'margin-top:6px' }, name, save),
       el('div', { class: 'muted small', style: 'margin-top:10px' }, state.statusLabel),
+      el('div', { class: 'muted small', style: 'margin-top:4px' }, historyNote()),
     ),
     el('h2', {}, 'Sync'),
     el('div', { class: 'card' },
       toggle('Pause syncing', 'Stop sending and receiving until you turn this off.', 'paused'),
-      toggle('Send files I copy', 'Files copied in ' + state.fileManager + ' are sent to your other devices (up to 20 files, 100 MB).', 'sendCopiedFiles'),
       toggle('Put received files on the clipboard', 'Paste them straight into a folder with ' + state.pasteKey + '.', 'filesToClipboard'),
       choice('Passwords and codes', 'Detected passwords, one-time codes and card numbers are never saved in history.', 'sensitive', [
         { value: 'expire', label: 'Send, then clear after 1 minute' },
@@ -145,6 +147,48 @@ function renderGeneral() {
         el('div', {}, el('div', {}, 'OmniClip ' + state.version), state.update ? el('div', { class: 'muted small' }, 'Version ' + state.update.version + ' is available') : null),
         el('button', { class: 'btn', onclick: () => act(() => api.checkUpdates()) }, state.update ? (state.update.ready ? 'Restart to update' : 'Download update') : 'Check for updates'),
       ),
+    ),
+  );
+}
+
+function historyNote() {
+  if (state.historyEncryption === 'on') return '🔒 Saved history is encrypted on this computer.';
+  if (state.historyEncryption === 'unavailable') return 'Saved history is not encrypted: this computer has no keychain OmniClip can use.';
+  return state.connected ? 'History is kept on ' + state.hubLabel + '.' : '';
+}
+
+// ---- rules
+function renderRules() {
+  const name = el('input', { type: 'text', placeholder: 'App name, e.g. 1Password', maxlength: '100' });
+  const add = (app) => act(() => api.ignoreApp(app, true));
+  const addBtn = el('button', { class: 'btn', onclick: () => name.value.trim() && add(name.value) }, 'Add');
+  name.addEventListener('keydown', (e) => e.key === 'Enter' && addBtn.click());
+  const apps = state.ignoredApps.map((a) =>
+    el('div', { class: 'row' }, el('div', {}, a), el('button', { class: 'btn', onclick: () => act(() => api.ignoreApp(a, false)) }, 'Remove')),
+  );
+  $('#rules').replaceChildren(
+    el('h2', {}, 'Send from this computer'),
+    el('div', { class: 'card' },
+      toggle('Text', 'Text you copy is sent to your other devices.', 'sendText'),
+      toggle('Keep formatting', 'Bold, fonts and links paste the same way on your other computers.', 'sendFormatting'),
+      toggle('Images', null, 'sendImages'),
+      toggle('Files and folders', 'Copied in ' + state.fileManager + '. Up to 20 items and 100 MB; folders are sent as a zip and unpacked on arrival.', 'sendCopiedFiles'),
+    ),
+    el('h2', {}, 'Use what other devices send'),
+    el('div', { class: 'card' },
+      toggle('Text', 'Put it on this computer’s clipboard.', 'receiveText'),
+      toggle('Images', 'Put them on this computer’s clipboard.', 'receiveImages'),
+      toggle('Files and folders', 'Save them to ' + state.downloadDir + '.', 'receiveFiles'),
+      el('div', { class: 'muted small', style: 'margin-top:12px' }, 'What you turn off still shows up in History. Anything sent to this computer alone always comes through.'),
+    ),
+    el('h2', {}, 'Ignore these apps'),
+    el('div', { class: 'card' },
+      el('div', { class: 'muted small' }, 'Nothing you copy while one of these apps is in front is sent.' + (state.frontAppHint ? ' ' + state.frontAppHint : '')),
+      ...apps,
+      el('div', { class: 'row' }, name, addBtn),
+      state.suggestedApps.length
+        ? el('div', { class: 'chips' }, ...state.suggestedApps.map((a) => el('button', { class: 'chip', title: 'Ignore ' + a, onclick: () => add(a) }, '+ ' + a)))
+        : null,
     ),
   );
 }
@@ -193,7 +237,7 @@ function confirmRemove(d) {
 // ---- history
 function clipRow(c) {
   const preview = c.kind !== 'text'
-    ? el('div', {}, (c.kind === 'image' ? '🖼 ' : '📄 ') + (c.name || c.kind))
+    ? el('div', {}, (c.kind === 'image' ? '🖼 ' : c.folder ? '📁 ' : '📄 ') + (c.name || c.kind))
     : c.sensitive ? el('div', { class: 'text muted' }, '🔒 •••••••• (password or code, deleted after a minute)') : el('div', { class: 'text' }, c.text || '');
   const from = c.sourceDeviceId === state.deviceId ? 'This computer' : c.sourceName;
   const to = c.targetName ? ' → ' + (c.targetDeviceId === state.deviceId ? 'this computer' : c.targetName) : '';
@@ -229,6 +273,7 @@ async function runSearch() {
 async function refresh() {
   state = await api.get();
   renderGeneral();
+  renderRules();
   renderDevices();
   if ($('#history').classList.contains('active')) runSearch();
 }
@@ -240,8 +285,8 @@ export function renderSettingsPage(): string {
   return `<!doctype html><html><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
 <title>OmniClip Settings</title><style>${STYLE}</style></head><body>
-<nav><button class="active" data-tab="general">General</button><button data-tab="devices">Devices</button><button data-tab="history">History</button></nav>
+<nav><button class="active" data-tab="general">General</button><button data-tab="rules">Rules</button><button data-tab="devices">Devices</button><button data-tab="history">History</button></nav>
 <div id="alert" class="card" style="display:none;margin:12px 16px 0;border-color:var(--accent)"></div>
-<main><section id="general" class="active"></section><section id="devices"></section><section id="history"></section></main>
+<main><section id="general" class="active"></section><section id="rules"></section><section id="devices"></section><section id="history"></section></main>
 <script>${SCRIPT}</script></body></html>`;
 }

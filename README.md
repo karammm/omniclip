@@ -68,12 +68,16 @@ OmniClip connects **all** of your devices instead, and keeps your data **at home
 | 📷 **Pair by scanning a QR code** | Open the OmniClip app on your phone, tap **Scan QR code**, done. |
 | ⚡ **Auto-send on Android** | Copy something, open OmniClip, and it's already on your computer. |
 | 🖼️ **Text, links, images and files** | Images go straight onto the desktop clipboard. Files are saved to `Downloads/OmniClip`. |
-| 📁 **Copy and paste files across computers** | Press ⌘C or Ctrl+C on files in Finder or Explorer. On the other computer, ⌘V or Ctrl+V pastes them into any folder. |
+| 📁 **Copy and paste files and folders across computers** | Press ⌘C or Ctrl+C on files or folders in Finder or Explorer. On the other computer, ⌘V or Ctrl+V pastes them into any folder. |
+| ✍️ **Formatting kept** | Bold, fonts and links copied on one computer paste the same way on the other. |
+| 🎛️ **Sync rules** | Choose what each computer sends and receives, and name apps (like your password manager) whose copies are never sent. |
+| 🟦 **Android tile and widget** | One tap in Quick Settings or on the home screen sends what you copied. Sharing to OmniClip asks which device to send to. |
+| 🗄️ **Encrypted history** | Saved clips and files are encrypted on the hub's disk, with a key kept in the computer's keychain. |
 | 📌 **Search and pin** | Search your whole history from any device. Pinned clips stay at the top and never expire. |
-| ⚙️ **Settings window** | Rename the computer, manage devices, choose where files are saved, and search your history. |
+| ⚙️ **Settings window** | Rename the computer, set sync rules, manage devices, choose where files are saved, and search your history. |
 | ⬆️ **Automatic updates** | Windows and the Linux AppImage install updates in the background. Mac tells you when a new version is out. |
 | 🕘 **History** | Your last 200 clips, plus any you've pinned. Click any of them to copy it again. |
-| 📤 **Share sheet integration** | Android: **Share → OmniClip** from any app. iOS: a one-tap Shortcut, including Back Tap. |
+| 📤 **Share sheet integration** | Android: **Share → OmniClip** from any app, to all devices or one. iOS: a one-tap Shortcut, including Back Tap. |
 | 🧭 **Zero configuration** | Computers find each other automatically over mDNS (Bonjour). |
 | 🛟 **Automatic failover** | If the hub computer shuts down, another desktop takes over within about 10 seconds, and phones find it on their own. |
 | 🔐 **Private by design** | Pairing codes, a token per device, encryption with a certificate pinned from the QR code, and per-device revocation. |
@@ -85,7 +89,7 @@ OmniClip connects **all** of your devices instead, and keeps your data **at home
 | **Mac** (macOS 12+) | Menu-bar app | Automatic: just copy | Automatic: just paste |
 | **Windows** 10/11 | System-tray app | Automatic: just copy | Automatic: just paste |
 | **Linux** (Ubuntu 22.04+, Fedora, …) | Tray app (AppImage or `.deb`) | Automatic: just copy | Automatic: just paste |
-| **Android** 8+ | OmniClip app (`.apk`) | Opening the app sends your clipboard automatically, or **Share → OmniClip** | Tap **Copy** |
+| **Android** 8+ | OmniClip app (`.apk`) | Opening the app, the Quick Settings tile or the widget sends your clipboard, or **Share → OmniClip** | Tap **Copy** |
 | **iPhone / iPad** | OmniClip app (`.ipa` / Xcode) | **Paste & Send**, or a one-tap Shortcut | Tap **Copy** |
 | Anything with a browser | Web app served by the hub | **Paste & Send**, or paste into the text box | Tap **Copy** |
 
@@ -201,7 +205,7 @@ Launch OmniClip on the second computer. It finds the hub on your network and sho
 
 ### On a Mac, Windows or Linux computer
 
-Just copy and paste. That includes files: select them in Finder or Explorer and press ⌘C or Ctrl+C. Up to 20 files and 100 MB are sent automatically; for bigger sets use **Send file…**. Folders are skipped.
+Just copy and paste. Formatting comes along, so bold text and links paste the same way. That includes files and folders: select them in Finder or Explorer and press ⌘C or Ctrl+C. Up to 20 items and 100 MB are sent automatically; for bigger sets use **Send file…**. Folders travel as a zip and are unpacked on the other computer, so they paste as a normal folder. Phones get the `.zip`.
 
 The tray menu also gives you:
 
@@ -211,14 +215,14 @@ The tray menu also gives you:
 | **Recent** | Your latest clips. Click one to put it back on this computer's clipboard. **Search history…** opens the History tab. |
 | **Quick paste…** | Opens the quick-paste picker (also ⌘⇧V / Ctrl+Shift+V, see below). |
 | **Send clipboard to** | Sends what's on this computer's clipboard to one device only. |
-| **Send file** | Sends files to every device, or to one device. On a Mac you can also drag files onto the menu-bar icon (sends to everyone). |
+| **Send file or folder** (Mac) / **Send file**, **Send folder** (Windows, Linux) | Sends files or folders to every device, or to one device. On a Mac you can also drag files and folders onto the menu-bar icon (sends to everyone). |
 | **Pair a phone or tablet…** | Shows the QR code and pairing code (hub only). |
 | **Devices** | Every paired device and whether it's online. Choose **Remove** to revoke one. |
 | **Pause syncing** | Temporarily stops sending and receiving. |
 | **Open at login** | Starts OmniClip automatically. |
 | **Check for updates** | Looks for a new version now. OmniClip also checks every 6 hours. |
 
-Files received from other devices are saved to `~/Downloads/OmniClip` (Windows: `Downloads\OmniClip`), a notification appears, and the files are put on the clipboard. Open any folder and press ⌘V or Ctrl+V to paste them there. Files sent together are pasted together.
+Files and folders received from other devices are saved to `~/Downloads/OmniClip` (Windows: `Downloads\OmniClip`), a notification appears, and they are put on the clipboard. Open any folder and press ⌘V or Ctrl+V to paste them there. Files sent together are pasted together.
 
 **Quick paste.** Press **⌘⇧V** (Mac) or **Ctrl+Shift+V** (Windows, Linux) in any app. Your pinned and recent clips appear next to the mouse. Type to search all history, use ↑ ↓ and Enter, or press 1–9. OmniClip pastes the clip into the app you were in. Change the shortcut, or turn off pasting so it only copies, in **Settings → General**.
 
@@ -227,11 +231,18 @@ Files received from other devices are saved to `~/Downloads/OmniClip` (Windows: 
 
 **Passwords and codes.** When you copy something that looks like a password, a one-time code or a card number (or anything a password manager marks as secret), OmniClip sends it as usual but never writes it to history, hides it on screen, and deletes it everywhere after one minute. Other computers clear it from their clipboard then too, if it's still there. In **Settings → General → Passwords and codes** you can choose **Never send** instead, or turn the guard off.
 
-**Settings** (tray menu → **Settings…**, or ⌘, / Ctrl+,) has three tabs:
+**Sync rules.** In **Settings → Rules** each computer chooses:
+
+- **What it sends:** text, formatting, images, and files and folders.
+- **What it uses from other devices:** text and images go on the clipboard, files and folders get saved. What you turn off still shows up in History, and anything sent to this computer alone always comes through.
+- **Apps to ignore:** nothing copied while one of these apps is in front is sent. Type an app's name, or click one of the suggestions (common password managers and apps you recently copied from). On Linux this needs `xdotool` and an X11 session.
+
+**Settings** (tray menu → **Settings…**, or ⌘, / Ctrl+,) has four tabs:
 
 | Tab | What's there |
 | --- | --- |
-| **General** | This computer's name, pause, file options (send copied files, put received files on the clipboard), passwords and codes, the quick-paste shortcut, where to save received files, open at login, updates |
+| **General** | This computer's name, whether its saved history is encrypted, pause, put received files on the clipboard, passwords and codes, the quick-paste shortcut, where to save received files, open at login, updates |
+| **Rules** | What this computer sends and receives, and the apps whose copies are never sent |
 | **Devices** | Every paired device, whether it's online, **Send clipboard** to that device, and **Remove**. Any computer on the network can remove phones and tablets. |
 | **History** | Search everything ever copied (text and file names), copy or save any clip again, **Send to…** one device, and pin or unpin clips |
 
@@ -246,7 +257,11 @@ Files received from other devices are saved to `~/Downloads/OmniClip` (Windows: 
 - **🔒 Passwords and codes** show as dots. Tap to show one. They disappear after a minute.
 - Every clip in **Recent** has a **Copy** button. Images and files also have **Save / Share** (app) or **Download** and **Share** (web app).
 - **If the hub computer goes away**, the app shows **Looking for hub…**. It checks the other desktops and your local network, then reconnects to whichever computer took over.
-- **Android app:** copy something in any app, then open OmniClip, and it's sent automatically. You can also use **Share → OmniClip** from any app, for text, photos or files.
+- **Android app:** copy something in any app, then open OmniClip, and it's sent automatically. Faster still:
+  - **Quick Settings tile:** pull down Quick Settings, tap the pencil to edit, and drag **Send clipboard** in. One tap sends what you copied and drops you back in your app.
+  - **Home-screen widget:** long-press the home screen → **Widgets** → **OmniClip**. Its **Send clipboard** button does the same; the icon opens the app.
+  - **Share → OmniClip** from any app, for text, photos or several files at once. OmniClip asks whether to send to all devices or just one.
+  - Copied text with formatting (for example from Chrome) keeps it when you tap **Copy** on a clip from a computer.
 - **iPhone app:** turn on automatic sending in **⚙︎ Settings** in the app. To stop iOS asking each time, go to **Settings → Apps → OmniClip → Paste from Other Apps → Allow**.
 
 ### iPhone one-tap Shortcut (optional)
@@ -347,6 +362,7 @@ stateDiagram-v2
 - **The phone apps pin the hub's certificate.** The pairing QR code contains a fingerprint of your network's certificate authority. The app checks the hub's certificate against it before pairing, and from then on trusts only that authority, for every request and the live connection. That's why the apps don't need the certificate install. A typed-in hub address (no QR code) trusts the hub the first time it connects.
 - **Basic mode** in the web app uses plain HTTP on port 7879. It isn't encrypted, so use it only on networks you trust. Port 7879 also serves the setup page, `/api/info` and the CA certificate, all of which are public.
 
+- **Saved history is encrypted.** The hub encrypts saved clips and files on disk with AES-256-GCM. The key is kept in the computer's keychain (macOS Keychain, Windows DPAPI, or the GNOME/KDE keyring on Linux), so copying the OmniClip folder off the computer doesn't reveal its contents. **Settings → General** shows whether it's on. If no keychain is available (some Linux setups), history is stored unencrypted. On a Mac, macOS may ask once after an update to let OmniClip use its keychain item, because the app isn't signed yet: choose **Always Allow**.
 - **Passwords stay out of history.** Clips that look like passwords, codes or card numbers, or that a password manager marks as secret, live only in the hub's memory and are deleted on every device after one minute. Detection is a best guess, so choose **Never send** in Settings if you'd rather they never leave the computer.
 - **Clips sent to one device** are delivered only to that device and the sender. Other devices can't list, search or download them.
 
@@ -370,7 +386,7 @@ The hub has a small REST API, handy for scripts, Shortcuts, Tasker or automation
 | `POST` | `/api/clips/:id/pin` | `{pinned: true\|false}`: pin or unpin a clip |
 | `PATCH` | `/api/me` | `{name}`: rename the calling device |
 | `DELETE` | `/api/devices/:id` | Remove a device (computers can remove any device; others only themselves) |
-| `POST` | `/api/clips` | Send a clip (see the formats below). Add `?to=<deviceId>` to send to one device, and `?sensitive=1` or `?sensitive=0` to override password detection. |
+| `POST` | `/api/clips` | Send a clip (see the formats below). Add `?to=<deviceId>` to send to one device, and `?sensitive=1` or `?sensitive=0` to override password detection. Text can carry `html` and `rtf` formatting. |
 | `GET` | `/api/clips/:id/blob` | Download an image or file clip |
 | `GET` | `/ws` | WebSocket: `hello`, `clip:new`, `clip:update`, `clip:remove`, `devices`, `revoked` events |
 
@@ -382,11 +398,17 @@ curl -X POST https://HUB:7878/api/clips --cacert omniclip-ca.crt \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"text": "Hello from the terminal"}'
 
+# Text with formatting (optional "html" and/or "rtf"; dropped for passwords)
+curl -X POST https://HUB:7878/api/clips --cacert omniclip-ca.crt \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"text": "Hello bold", "html": "<b>Hello</b> bold"}'
+
 # Text (raw body)
 curl -X POST https://HUB:7878/api/clips --cacert omniclip-ca.crt \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: text/plain" --data-binary @notes.txt
 
 # Image or file (multipart). Add -F kind=file before the file to force "file" over "image".
+# A zip sent with -F folder=1 is marked as a folder, and computers unpack it on arrival.
 curl -X POST https://HUB:7878/api/clips --cacert omniclip-ca.crt \
   -H "Authorization: Bearer $TOKEN" -F "file=@screenshot.png"
 
@@ -407,13 +429,15 @@ Message schemas live in [`packages/protocol/src/index.ts`](packages/protocol/src
 | mDNS service | `_omniclip._tcp` |
 | History | 200 clips |
 | File and image storage | 1 GB, oldest deleted first |
-| Largest text clip | 1 MB |
+| Largest text clip | 1 MB (plus up to 2 MB each of HTML and RTF formatting) |
 | Largest upload | 200 MB |
 
 Hub data, certificates and stored files live in the app's user-data folder:
 
 - **macOS:** `~/Library/Application Support/OmniClip`
 - **Windows:** `%APPDATA%\OmniClip`
+
+The standalone hub (`npm run dev:hub`) encrypts its history when `OMNICLIP_HISTORY_KEY` is set to 64 hex characters (`openssl rand -hex 32`).
 
 Delete that folder to reset OmniClip completely. You'll need to pair every device again.
 
@@ -544,7 +568,7 @@ Choose **Search again** in the tray menu if it appears, or restart OmniClip. Som
 <details>
 <summary><b>Copying a file in Finder or Explorer doesn't sync</b></summary>
 
-Check that **Settings → General → Send files I copy** is on. Up to 20 files and 100 MB are sent automatically, and folders are skipped. For anything bigger, use **Send file** in the tray menu.
+Check that **Settings → Rules → Files and folders** is on, and that the app you copied from isn't in **Ignore these apps**. Up to 20 items and 100 MB are sent automatically. For anything bigger, use **Send file** in the tray menu.
 </details>
 
 ## Known limitations
@@ -553,7 +577,8 @@ Check that **Settings → General → Send files I copy** is on. Up to 20 files 
 - **The web app after a failover** has to be opened at the new hub's address. The phone apps and desktops move over automatically.
 - **The iPhone app** needs re-signing every 7 days with a free Apple ID, and it isn't on the App Store.
 - **Wi-Fi/LAN only.** There's no Bluetooth or internet relay yet.
-- **Copied folders** aren't sent. Zip them first, or send the files inside.
+- **Formatting** goes between computers and to Android. iPhones and iPads copy plain text.
+- **The Android tile and widget** briefly open OmniClip, because Android only lets the app in front read the clipboard.
 - **Automatic updates on Mac** only notify you. Installing silently needs a signed app. The same goes for the `.deb` and `.msi`; the AppImage and `.exe` update themselves.
 - **Password detection is a guess.** Unusual passwords can slip through and some ordinary text (like `v2-Build#7`) can be treated as a password. Password managers that mark their copies are always recognised.
 - **Linux Wayland desktops** may not allow global shortcuts or simulated paste. X11 sessions work fully.
@@ -570,7 +595,9 @@ Check that **Settings → General → Send files I copy** is on. Up to 20 files 
 - [x] Automatic updates (Windows), update notifications (Mac)
 - [x] Linux desktop build
 - [x] Quick-paste shortcut, send to one device, password guard
-- [ ] End-to-end encryption of stored history
+- [x] Encrypted history on the hub's disk
+- [x] Folders, formatting, sync rules, Android tile and widget
+- [ ] End-to-end encryption between devices
 - [ ] Optional Bluetooth for nearby devices without Wi-Fi
 
 ## Community and support

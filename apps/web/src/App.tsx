@@ -26,6 +26,7 @@ import { canCopyImages, canReadClipboard, copyImage, copyText, readClipboard, se
 import { findHub } from './discovery';
 import { Setup } from './Setup';
 import { useHub, type Status } from './useHub';
+import type { SharedItem } from './native';
 
 // inline MODE check so the browser build drops the native chunk entirely
 const native = () => (import.meta.env.MODE === 'native' ? import('./native') : Promise.reject(new Error('native only')));
@@ -409,13 +410,17 @@ function Main({
   const fileInput = useRef<HTMLInputElement>(null);
   const clipsRef = useRef(clips);
   clipsRef.current = clips;
+  /** Android: items shared to OmniClip, waiting for the user to pick where they go. */
+  const [incoming, setIncoming] = useState<SharedItem[]>([]);
+  /** The Quick Settings tile or widget is sending the clipboard; the open-app auto-send stays out of the way. */
+  const tileBusy = useRef(false);
 
   // Native app: send whatever is on the clipboard when the app is opened (Android allows this while in front)
   useEffect(() => {
     if (!NATIVE) return;
     let cancelled = false;
     const check = async () => {
-      if (!autoSendEnabled()) return;
+      if (!autoSendEnabled() || tileBusy.current) return;
       try {
         const content = await readClipboard();
         if (!content || cancelled) return;
@@ -427,7 +432,7 @@ function Main({
           return;
         }
         localStorage.setItem(LAST_SENT_KEY, fp);
-        if (content.kind === 'text') await sendText(session.token, content.text);
+        if (content.kind === 'text') await sendText(session.token, content.text, undefined, content.html);
         else await sendFile(session.token, content.blob, `image.${content.blob.type.split('/')[1] ?? 'png'}`);
         toast('Sent your clipboard to all devices');
       } catch {
@@ -462,7 +467,7 @@ function Main({
     run(async () => {
       const content = await readClipboard();
       if (!content) throw new Error('Clipboard is empty');
-      if (content.kind === 'text') await sendText(session.token, content.text, to);
+      if (content.kind === 'text') await sendText(session.token, content.text, to, content.html);
       else await sendFile(session.token, content.blob, `image.${content.blob.type.split('/')[1] ?? 'png'}`, undefined, to);
     }, sentTo);
 
@@ -483,23 +488,56 @@ function Main({
     if (fileInput.current) fileInput.current.value = '';
   };
 
-  // Android app: items shared to OmniClip from other apps
+  const sendShared = (items: SharedItem[], device?: Device) => {
+    setIncoming([]);
+    void run(async () => {
+      for (const item of items) {
+        if (item.kind === 'text') await sendText(session.token, item.text, device?.id);
+        else {
+          const blob = await (await fetch(`data:${item.mime};base64,${item.data}`)).blob();
+          await sendFile(session.token, blob, item.name, item.mime.startsWith('image/') ? undefined : 'file', device?.id);
+        }
+      }
+    }, device ? `Shared to ${device.name}` : 'Shared to all devices');
+  };
+
+  // Android Quick Settings tile / home-screen widget: send the clipboard, then go back to the previous app
+  const sendClipboardFromTile = async (n: Awaited<ReturnType<typeof native>>) => {
+    tileBusy.current = true;
+    try {
+      // Android only lets the app read the clipboard once its window has focus
+      let content: Awaited<ReturnType<typeof readClipboard>> = null;
+      for (let i = 0; i < 6 && !content; i++) {
+        await new Promise((r) => setTimeout(r, i ? 300 : 400));
+        content = await readClipboard().catch(() => null);
+      }
+      if (!content) return toast('Your clipboard is empty');
+      try {
+        localStorage.setItem(LAST_SENT_KEY, fingerprint(content));
+      } catch {
+        // ignore
+      }
+      if (content.kind === 'text') await sendText(session.token, content.text, undefined, content.html);
+      else await sendFile(session.token, content.blob, `image.${content.blob.type.split('/')[1] ?? 'png'}`);
+      toast('Sent your clipboard to all devices');
+      window.setTimeout(() => void n.moveToBack().catch(() => {}), 1200);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Could not send your clipboard');
+    } finally {
+      tileBusy.current = false;
+    }
+  };
+
+  // Android app: items shared to OmniClip from other apps, and tile / widget taps
   useEffect(() => {
     if (!NATIVE) return;
     let cancelled = false;
     const drain = () =>
       void native().then(async (n) => {
-        const items = await n.takeShared();
-        if (!items.length || cancelled) return;
-        await run(async () => {
-          for (const item of items) {
-            if (item.kind === 'text') await sendText(session.token, item.text);
-            else {
-              const blob = await (await fetch(`data:${item.mime};base64,${item.data}`)).blob();
-              await sendFile(session.token, blob, item.name, item.mime.startsWith('image/') ? undefined : 'file');
-            }
-          }
-        }, 'Shared to all devices');
+        const { items, sendClipboard } = await n.takeShared();
+        if (cancelled) return;
+        if (items.length) setIncoming((prev) => [...prev, ...items]);
+        if (sendClipboard) await sendClipboardFromTile(n);
       });
     drain();
     let offShared = () => {};
@@ -537,6 +575,7 @@ function Main({
 
   return (
     <main class="app">
+      {incoming.length > 0 && <ShareSheet items={incoming} devices={others} onSend={(d) => sendShared(incoming, d)} onCancel={() => setIncoming([])} />}
       <header class="bar">
         <img src="/icons/icon-192.png" alt="" width={28} height={28} />
         <strong>OmniClip</strong>
@@ -670,7 +709,7 @@ function ClipRow({ clip, session, toast, onPin }: { clip: Clip; session: Session
   const to = clip.targetName ? ` → ${clip.targetDeviceId === session.deviceId ? 'you' : clip.targetName}` : '';
 
   const copy = async () => {
-    const ok = clip.kind === 'text' ? await copyText(clip.text ?? '') : await copyImage(url);
+    const ok = clip.kind === 'text' ? await copyText(clip.text ?? '', clip.html) : await copyImage(url);
     toast(ok ? 'Copied' : 'Copy failed');
   };
 
@@ -713,7 +752,11 @@ function ClipRow({ clip, session, toast, onPin }: { clip: Clip; session: Session
       {clip.kind === 'image' && <img class="thumb" src={url} alt={clip.name ?? 'image'} loading="lazy" />}
       {clip.kind === 'file' && (
         <div class="file">
-          📄 <span>{clip.name}</span> <span class="muted">{formatSize(clip.size)}</span>
+          {clip.folder ? '📁' : '📄'} <span>{clip.name}</span>{' '}
+          <span class="muted">
+            {clip.folder ? 'Folder · ' : ''}
+            {formatSize(clip.size)}
+          </span>
         </div>
       )}
       <div class="row">
@@ -742,8 +785,37 @@ function ClipRow({ clip, session, toast, onPin }: { clip: Clip; session: Session
   );
 }
 
+const DEVICE_ICON: Record<string, string> = { mac: '💻', windows: '🖥️', linux: '🐧', ios: '📱', ipados: '📲', android: '🤖', web: '🌐', shortcut: '⚡' };
+
+/** Android: asks where things shared to OmniClip should go. */
+function ShareSheet({ items, devices, onSend, onCancel }: { items: SharedItem[]; devices: Device[]; onSend: (d?: Device) => void; onCancel: () => void }) {
+  const files = items.filter((i) => i.kind === 'file').length;
+  const what =
+    items.length === 1 ? (files ? (items[0] as { name: string }).name : 'this text') : files === items.length ? `${files} files` : `${items.length} items`;
+  const sorted = [...devices].sort((a, b) => Number(!!b.online) - Number(!!a.online));
+  return (
+    <div class="sheet-backdrop" onClick={onCancel}>
+      <div class="sheet card stack" role="dialog" aria-label="Send to" onClick={(e) => e.stopPropagation()}>
+        <h2>Send {what} to</h2>
+        <button class="primary" onClick={() => onSend()}>
+          All devices
+        </button>
+        {sorted.map((d) => (
+          <button key={d.id} onClick={() => onSend(d)}>
+            {DEVICE_ICON[d.platform] ?? '•'} {d.name}
+            {!d.online && <span class="muted">&nbsp;(offline)</span>}
+          </button>
+        ))}
+        <button class="cancel" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function DeviceList({ devices, me }: { devices: Device[]; me: string }) {
-  const icon: Record<string, string> = { mac: '💻', windows: '🖥️', linux: '🐧', ios: '📱', ipados: '📲', android: '🤖', web: '🌐', shortcut: '⚡' };
+  const icon = DEVICE_ICON;
   return (
     <details class="devices">
       <summary>
