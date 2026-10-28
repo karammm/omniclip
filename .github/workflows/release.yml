@@ -30,15 +30,41 @@ jobs:
       - run: npm ci
       - run: node scripts/set-version.mjs "$VERSION"
       - run: npm run build:web
+      # Signing and notarization run only when the secrets are set (see "Code signing" in the README)
+      - name: Prepare signing
+        env:
+          CERT: ${{ secrets.MAC_CERTIFICATE_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
+          API_KEY: ${{ secrets.APPLE_API_KEY_P8 }}
+          API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          if [ -n "$CERT" ]; then
+            echo "CSC_LINK=$CERT" >> "$GITHUB_ENV"
+            echo "::add-mask::$CERT_PASSWORD"
+            echo "CSC_KEY_PASSWORD=$CERT_PASSWORD" >> "$GITHUB_ENV"
+          else
+            echo "CSC_IDENTITY_AUTO_DISCOVERY=false" >> "$GITHUB_ENV"
+            echo "::warning::MAC_CERTIFICATE_P12_BASE64 is not set; the Mac app is ad-hoc signed and macOS will warn on first open."
+          fi
+          if [ -n "$API_KEY" ]; then
+            printf '%s' "$API_KEY" > "$RUNNER_TEMP/AuthKey.p8"
+            { echo "APPLE_API_KEY=$RUNNER_TEMP/AuthKey.p8"; echo "APPLE_API_KEY_ID=$API_KEY_ID"; echo "APPLE_API_ISSUER=$API_ISSUER"; } >> "$GITHUB_ENV"
+          elif [ -n "$CERT" ]; then
+            echo "::warning::APPLE_API_KEY_P8 is not set; the Mac app is signed but not notarized."
+          fi
       - name: Build dmg (Apple Silicon + Intel)
         working-directory: apps/desktop
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: node build.mjs && npx electron-builder --mac --publish never
+        run: node build.mjs && npx electron-builder --mac --publish never --config builder.config.cjs
       - uses: actions/upload-artifact@v4
         with:
           name: mac
-          path: apps/desktop/release/*.dmg
+          # signed builds also make a zip + latest-mac.yml so installed apps can update themselves
+          path: |
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*-mac-*.zip
+            apps/desktop/release/*-mac-*.zip.blockmap
+            apps/desktop/release/latest-mac.yml
           if-no-files-found: error
 
   windows:
@@ -55,7 +81,18 @@ jobs:
       - run: npm run build:web
       - name: Build installers
         working-directory: apps/desktop
-        run: node build.mjs && npx electron-builder --win --publish never
+        # Azure Artifact Signing (or a .pfx) signs the app and both installers when the secrets are set
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_SIGNING_ENDPOINT: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          AZURE_CERT_PROFILE: ${{ secrets.AZURE_CERT_PROFILE }}
+          AZURE_PUBLISHER_NAME: ${{ secrets.AZURE_PUBLISHER_NAME }}
+          WIN_CSC_LINK: ${{ secrets.WIN_CERTIFICATE_PFX_BASE64 }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CERTIFICATE_PASSWORD }}
+        run: node build.mjs && npx electron-builder --win --publish never --config builder.config.cjs
       - uses: actions/upload-artifact@v4
         with:
           name: windows
@@ -81,7 +118,7 @@ jobs:
       - run: npm run build:web
       - name: Build AppImage and deb
         working-directory: apps/desktop
-        run: node build.mjs && npx electron-builder --linux --publish never
+        run: node build.mjs && npx electron-builder --linux --publish never --config builder.config.cjs
       - uses: actions/upload-artifact@v4
         with:
           name: linux
@@ -191,4 +228,4 @@ jobs:
             | **Android** | `OmniClip-*-android.apk` |
             | **iPhone / iPad** | `OmniClip-*-ios-unsigned.ipa` (install with [Sideloadly](https://sideloadly.io) or AltStore, or build from source in Xcode) |
 
-            The apps aren't signed by Apple or Microsoft yet, so you'll see a warning the first time. See [Install](https://github.com/karammm/omniclip#install) for the one-time steps.
+            If your computer warns that the app is from an unidentified developer, see [Install](https://github.com/karammm/omniclip#install) for the one-time steps.

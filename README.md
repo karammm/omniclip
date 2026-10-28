@@ -14,12 +14,16 @@ Drop a file on the Mac and pick it up on the iPad. No cloud, no account, no app 
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178c6?logo=typescript&logoColor=white)
 ![Electron](https://img.shields.io/badge/Electron-45-47848f?logo=electron&logoColor=white)
 ![Local only](https://img.shields.io/badge/data-stays%20on%20your%20LAN-16a34a)
-![Status](https://img.shields.io/badge/status-v0.1%20preview-orange)
+![Status](https://img.shields.io/badge/status-v0.7-blueviolet)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 <img src="docs/demo.gif" alt="OmniClip demo: text and an image copied on one device appear instantly on two phones" width="720">
 
 <sub>Text from a MacBook, a note typed on an iPhone, and a photo all appear on every paired device in real time. <a href="docs/demo.mp4">Watch as MP4</a></sub>
+
+<br><br>
+
+<img src="docs/screenshot-phone.png" alt="The OmniClip phone app: send to all devices or one, Paste &amp; Send, and a feed of clips from your other devices" width="260">&nbsp;&nbsp;<img src="docs/screenshot-settings.png" alt="OmniClip settings on a computer: searchable history of everything copied on every device" width="520">
 
 <br><br>
 
@@ -525,6 +529,45 @@ About 15 minutes later, a GitHub Release appears with the Mac `.dmg` files, the 
 
 Create the key once with `keytool -genkeypair -v -keystore omniclip.jks -alias omniclip -keyalg RSA -keysize 4096 -validity 10000`, and keep a backup. If you lose it, users have to uninstall before they can update. Without these secrets, the APK is signed with a temporary key.
 
+### Code signing
+
+Unsigned apps make macOS and Windows warn people the first time they open OmniClip. The release workflow signs everything as soon as the secrets below exist; without them it keeps building ad-hoc signed apps, so nothing breaks in the meantime. Both certificates cost money, and the signing setup lives in [`builder.config.cjs`](apps/desktop/builder.config.cjs).
+
+**Mac: Developer ID + notarization** (Apple Developer Program, $99 a year)
+
+1. Join the [Apple Developer Program](https://developer.apple.com/programs/enroll/).
+2. In Xcode → **Settings → Accounts → Manage Certificates**, click **+** → **Developer ID Application**. Then in Keychain Access, right-click the certificate → **Export** as `.p12` with a password.
+3. In [App Store Connect](https://appstoreconnect.apple.com/access/integrations/api) → **Users and Access → Integrations → App Store Connect API**, create a key with the **Developer** role and download the `.p8` (you can only download it once). Note its **Key ID** and the **Issuer ID** above the list.
+4. Add these repository secrets:
+
+| Secret | Value |
+| --- | --- |
+| `MAC_CERTIFICATE_P12_BASE64` | `base64 -i DeveloperID.p12 \| pbcopy` |
+| `MAC_CERTIFICATE_PASSWORD` | The `.p12` export password |
+| `APPLE_API_KEY_P8` | The whole text of `AuthKey_XXXXXXXXXX.p8` |
+| `APPLE_API_KEY_ID` | The key's ID |
+| `APPLE_API_ISSUER` | The Issuer ID |
+
+Signed Mac releases also publish a `.zip` and `latest-mac.yml`, so Mac installs update themselves from then on, and macOS stops asking again for Accessibility and keychain access after updates.
+
+**Windows: Azure Artifact Signing** (formerly Trusted Signing, about $10 a month)
+
+1. In the [Azure portal](https://portal.azure.com), create an **Artifact Signing** account, complete identity validation, and create a **Public Trust** certificate profile. Check Microsoft's current eligibility rules for individual developers first.
+2. Create an app registration (**Microsoft Entra ID → App registrations**) with a client secret, and give it the **Certificate Profile Signer** role on the signing account (Access control → Add role assignment).
+3. Add these repository secrets:
+
+| Secret | Value |
+| --- | --- |
+| `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` | From the app registration |
+| `AZURE_SIGNING_ENDPOINT` | The account's region endpoint, e.g. `https://eus.codesigning.azure.net` |
+| `AZURE_SIGNING_ACCOUNT` | The signing account name |
+| `AZURE_CERT_PROFILE` | The certificate profile name |
+| `AZURE_PUBLISHER_NAME` | The certificate's subject name (CN), e.g. your legal name |
+
+Already have a `.pfx` code-signing certificate? Set `WIN_CERTIFICATE_PFX_BASE64` and `WIN_CERTIFICATE_PASSWORD` instead. The `.exe`, the app inside it and the `.msi` are all signed.
+
+The release log says what happened, for example `[builder] macOS: Developer ID signed + notarized; Windows: Azure signed`.
+
 ### Building on your own machine
 
 ```bash
@@ -579,15 +622,16 @@ Check that **Settings → Rules → Files and folders** is on, and that the app 
 - **Wi-Fi/LAN only.** There's no Bluetooth or internet relay yet.
 - **Formatting** goes between computers and to Android. iPhones and iPads copy plain text.
 - **The Android tile and widget** briefly open OmniClip, because Android only lets the app in front read the clipboard.
-- **Automatic updates on Mac** only notify you. Installing silently needs a signed app. The same goes for the `.deb` and `.msi`; the AppImage and `.exe` update themselves.
+- **Automatic updates on Mac** only notify you until releases are signed with a Developer ID (see [Code signing](#code-signing)); signed Mac builds update themselves. The `.deb` and `.msi` always only notify; the AppImage and `.exe` update themselves.
 - **Password detection is a guess.** Unusual passwords can slip through and some ordinary text (like `v2-Build#7`) can be treated as a password. Password managers that mark their copies are always recognised.
 - **Linux Wayland desktops** may not allow global shortcuts or simulated paste. X11 sessions work fully.
-- **Unsigned installers.** Each platform shows a warning the first time (see [Install](#install)).
+- **Unsigned installers** until the signing secrets are added. Each platform shows a warning the first time (see [Install](#install)).
 
 ## Roadmap
 
 - [x] Mac, Windows, Android and iOS apps, built automatically on every release
-- [ ] Signed and notarized installers (silent updates on Mac too)
+- [x] Release pipeline ready for signed and notarized installers (needs the certificates, see [Code signing](#code-signing))
+- [x] Redesigned interface on every device
 - [ ] App Store and Google Play listings
 - [x] Phones that follow the hub automatically after a failover
 - [x] Automatic sync of files copied in Finder and Explorer

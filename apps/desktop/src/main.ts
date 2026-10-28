@@ -800,9 +800,10 @@ async function pickerClips(query: string): Promise<Clip[]> {
 
 async function openPicker(): Promise<void> {
   if (!pickerWin || pickerWin.isDestroyed()) {
+    const mac = process.platform === 'darwin';
     pickerWin = new BrowserWindow({
-      width: 420,
-      height: 440,
+      width: 460,
+      height: 470,
       frame: false,
       resizable: false,
       show: false,
@@ -811,13 +812,14 @@ async function openPicker(): Promise<void> {
       fullscreenable: false,
       minimizable: false,
       maximizable: false,
-      transparent: process.platform === 'darwin',
+      // macOS: a frosted popover with the system's rounded corners; elsewhere the page draws its own frame
+      ...(mac ? { vibrancy: 'popover' as const, visualEffectState: 'active' as const, backgroundColor: '#00000000', roundedCorners: true } : { transparent: false }),
       webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false },
     });
     pickerWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     pickerWin.on('blur', () => pickerWin?.hide());
     pickerWin.on('closed', () => (pickerWin = null));
-    await pickerWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(renderPickerPage())}`);
+    await pickerWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(renderPickerPage(mac))}`);
   }
   // open next to the mouse, kept inside the screen it's on
   const cursor = screen.getCursorScreenPoint();
@@ -885,9 +887,9 @@ async function pasteIntoFrontApp(): Promise<void> {
 
 ipcMain.handle('picker:list', async (_e, query: string) => {
   const items = (await pickerClips(String(query ?? ''))).map(pickerItem);
-  const action = cfg.data.autoPaste ? 'paste' : 'copy';
-  const hint = state.client?.status === 'online' ? `↑↓ choose · Enter to ${action} · Esc to close` : 'Offline: showing clips this computer already has';
-  return { items, hint };
+  const action = cfg.data.autoPaste ? 'Paste' : 'Copy';
+  const offline = state.client?.status !== 'online';
+  return { items, action, note: offline ? 'Offline: showing clips this computer already has' : '' };
 });
 ipcMain.handle('picker:choose', async (_e, id: string) => {
   const clip = await findClip(String(id));
@@ -929,8 +931,8 @@ async function openPairWindow(): Promise<void> {
     return;
   }
   pairWin = new BrowserWindow({
-    width: 420,
-    height: 640,
+    width: 440,
+    height: 760,
     resizable: false,
     title: 'OmniClip',
     show: false,
@@ -997,19 +999,22 @@ async function openSettings(tab?: 'history'): Promise<void> {
     settingsWin.focus();
     return;
   }
+  const mac = process.platform === 'darwin';
   settingsWin = new BrowserWindow({
-    width: 560,
-    height: 640,
-    minWidth: 440,
-    minHeight: 420,
+    width: 780,
+    height: 620,
+    minWidth: 640,
+    minHeight: 440,
     title: 'OmniClip Settings',
     show: false,
     autoHideMenuBar: true,
+    // macOS: translucent sidebar under inset traffic lights, like System Settings
+    ...(mac ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 18, y: 18 }, vibrancy: 'sidebar' as const, backgroundColor: '#00000000' } : {}),
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false },
   });
   settingsWin.once('ready-to-show', () => settingsWin?.show());
   settingsWin.on('closed', () => (settingsWin = null));
-  await settingsWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(renderSettingsPage())}${tab ? `#${tab}` : ''}`);
+  await settingsWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(renderSettingsPage(mac))}${tab ? `#${tab}` : ''}`);
   if (process.platform === 'darwin') app.focus({ steal: true });
 }
 

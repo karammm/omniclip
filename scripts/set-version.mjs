@@ -22,7 +22,7 @@ function edit(rel, fn) {
   console.log(`${after !== before ? 'updated' : 'unchanged'} ${rel}`);
 }
 
-const packages = ['package.json', 'packages/protocol/package.json', 'apps/hub/package.json', 'apps/web/package.json', 'apps/desktop/package.json', 'apps/mobile/package.json'];
+const packages = ['package.json', 'packages/protocol/package.json', 'packages/ui/package.json', 'apps/hub/package.json', 'apps/web/package.json', 'apps/desktop/package.json', 'apps/mobile/package.json'];
 for (const rel of packages) {
   edit(rel, (s) =>
     s
