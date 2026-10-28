@@ -1,7 +1,7 @@
 {
   "name": "@omniclip/desktop",
   "productName": "OmniClip",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "license": "MIT",
   "private": true,
   "description": "One clipboard for every device on your Wi-Fi",
@@ -18,11 +18,12 @@
     "dist:linux": "node build.mjs && electron-builder --linux --publish never"
   },
   "devDependencies": {
-    "@omniclip/hub": "0.5.0",
-    "@omniclip/protocol": "0.5.0",
+    "@omniclip/hub": "0.6.0",
+    "@omniclip/protocol": "0.6.0",
     "electron": "45.0.0",
     "electron-builder": "^26.0.0",
     "electron-updater": "^6.8.11",
+    "fflate": "^0.8.2",
     "qrcode": "^1.5.4",
     "ws": "^8.22.0"
   },

@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('omniclip', {
     checkUpdates: () => ipcRenderer.invoke('settings:checkUpdates'),
     sendTo: (id: string) => ipcRenderer.invoke('settings:sendTo', id),
     sendClipboardTo: (deviceId: string) => ipcRenderer.invoke('settings:sendClipboardTo', deviceId),
+    ignoreApp: (name: string, ignore: boolean) => ipcRenderer.invoke('settings:ignoreApp', name, ignore),
     onChange: (fn: () => void) => {
       ipcRenderer.on('settings:changed', fn);
     },

@@ -15,8 +15,10 @@ export async function scanQr(): Promise<string | null> {
   return res.ScanResult || null;
 }
 
-export async function writeText(text: string): Promise<void> {
-  await Clipboard.write({ string: text });
+export async function writeText(text: string, html?: string): Promise<void> {
+  // Android keeps the formatting too; the Capacitor plugin only takes plain text
+  if (html && platform === 'android') await OmniClip.copyText({ text, html });
+  else await Clipboard.write({ string: text });
 }
 
 export async function writeImage(dataUrl: string): Promise<void> {
@@ -83,13 +85,15 @@ export type SharedItem = { kind: 'text'; text: string } | { kind: 'file'; name: 
 
 interface OmniClipPlugin {
   trustCa(opts: { pem: string }): Promise<void>;
-  take(): Promise<{ items: SharedItem[] }>;
+  take(): Promise<{ items: SharedItem[]; sendClipboard?: boolean }>;
   copyImage(opts: { data: string; mime: string }): Promise<void>;
+  copyText(opts: { text: string; html: string }): Promise<void>;
+  moveToBack(): Promise<void>;
   addListener(event: 'shared', fn: () => void): Promise<PluginListenerHandle>;
 }
 
 // App-local plugin (OmniClipPlugin.java / OmniClipPlugin.swift). trustCa works on both platforms;
-// the share inbox and image copy are Android only.
+// the share inbox, the Quick Settings tile / widget requests and the copy helpers are Android only.
 const OmniClip = registerPlugin<OmniClipPlugin>('OmniClip');
 
 /** Pins the network's CA so HTTPS and WebSocket connections to the hub are accepted. */
@@ -97,9 +101,16 @@ export async function trustCa(pem: string): Promise<void> {
   await OmniClip.trustCa({ pem });
 }
 
-export async function takeShared(): Promise<SharedItem[]> {
-  if (platform !== 'android') return [];
-  return (await OmniClip.take()).items;
+/** Items shared to OmniClip, and whether the tile or widget asked to send the clipboard. */
+export async function takeShared(): Promise<{ items: SharedItem[]; sendClipboard: boolean }> {
+  if (platform !== 'android') return { items: [], sendClipboard: false };
+  const res = await OmniClip.take();
+  return { items: res.items, sendClipboard: !!res.sendClipboard };
+}
+
+/** Back to the app the user came from (after the tile or widget sent the clipboard). */
+export async function moveToBack(): Promise<void> {
+  if (platform === 'android') await OmniClip.moveToBack();
 }
 
 export function onShared(fn: () => void): () => void {

@@ -9,7 +9,12 @@ import { advertise, shutdownMdns } from './mdns.js';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const dataDir = process.env.OMNICLIP_DATA ?? path.join(root, '.omniclip-dev');
 
-const hub = new Hub({ dataDir, webDir: path.join(root, 'apps/web/dist'), log: (m) => console.log(`[hub] ${m}`) });
+// OMNICLIP_HISTORY_KEY (64 hex characters) encrypts saved history on disk
+const keyHex = process.env.OMNICLIP_HISTORY_KEY;
+if (keyHex && !/^[0-9a-f]{64}$/i.test(keyHex)) throw new Error('OMNICLIP_HISTORY_KEY must be 64 hex characters (openssl rand -hex 32)');
+const historyKey = keyHex ? Buffer.from(keyHex, 'hex') : undefined;
+
+const hub = new Hub({ dataDir, webDir: path.join(root, 'apps/web/dist'), historyKey, log: (m) => console.log(`[hub] ${m}`) });
 await hub.start();
 const stopAdvertising = advertise({ port: hub.ports.tls, networkId: hub.networkId, hubName: os.hostname() });
 

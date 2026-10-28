@@ -1,13 +1,19 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { pipeline } from 'node:stream/promises';
+import type { Readable, Writable } from 'node:stream';
 import { BLOB_BUDGET_BYTES, HISTORY_LIMIT, type Clip, type DeviceRecord } from '@omniclip/protocol';
+import { isSealedFile, openBlob, seal, sealStream, unseal } from './seal.js';
 
 interface StoreData {
   networkId: string;
   devices: DeviceRecord[];
   clips: Clip[];
 }
+
+/** On disk, clips are replaced by `sealed` (encrypted JSON) when a history key is set. */
+type StoreFile = Omit<StoreData, 'clips'> & { clips?: Clip[]; sealed?: string };
 
 export interface StoreLimits {
   historyLimit: number;
@@ -32,8 +38,17 @@ export class Store {
   private file: string;
   private data: StoreData;
   private limits: StoreLimits;
+  /** History couldn't be decrypted (the key changed or is missing) and was started over. */
+  readonly historyLost: boolean = false;
 
-  constructor(dir: string, seed?: { networkId: string; devices: DeviceRecord[] }, limits?: Partial<StoreLimits>) {
+  /** With `key` (32 bytes), clips and files are encrypted on disk. */
+  constructor(
+    dir: string,
+    seed?: { networkId: string; devices: DeviceRecord[] },
+    limits?: Partial<StoreLimits>,
+    private readonly key?: Buffer,
+  ) {
+    if (key && key.length !== 32) throw new Error('history key must be 32 bytes');
     this.limits = { historyLimit: HISTORY_LIMIT, blobBudgetBytes: BLOB_BUDGET_BYTES, ...limits };
     this.file = path.join(dir, 'store.json');
     this.blobDir = path.join(dir, 'blobs');
@@ -41,7 +56,18 @@ export class Store {
 
     let data: StoreData | null = null;
     try {
-      data = JSON.parse(fs.readFileSync(this.file, 'utf8')) as StoreData;
+      const raw = JSON.parse(fs.readFileSync(this.file, 'utf8')) as StoreFile;
+      let clips = raw.clips ?? [];
+      if (raw.sealed) {
+        try {
+          if (!key) throw new Error('no key');
+          clips = JSON.parse(unseal(key, raw.sealed).toString('utf8')) as Clip[];
+        } catch {
+          clips = [];
+          this.historyLost = true;
+        }
+      }
+      data = { networkId: raw.networkId, devices: raw.devices, clips };
     } catch {
       data = null;
     }
@@ -54,6 +80,7 @@ export class Store {
       data.devices = [...known.values()];
     }
     this.data = data ?? { networkId: crypto.randomUUID(), devices: [], clips: [] };
+    this.removeOrphanBlobs();
     this.save();
   }
 
@@ -61,11 +88,61 @@ export class Store {
     return this.data.networkId;
   }
 
+  /** Whether clips and files are encrypted on disk. */
+  get encrypted(): boolean {
+    return !!this.key;
+  }
+
   private save(): void {
     const tmp = `${this.file}.tmp`;
     // passwords and codes stay in memory only
-    fs.writeFileSync(tmp, JSON.stringify({ ...this.data, clips: this.data.clips.filter((c) => !c.sensitive) }));
+    const clips = this.data.clips.filter((c) => !c.sensitive);
+    const { networkId, devices } = this.data;
+    const out: StoreFile = this.key ? { networkId, devices, sealed: seal(this.key, Buffer.from(JSON.stringify(clips))) } : { networkId, devices, clips };
+    fs.writeFileSync(tmp, JSON.stringify(out), { mode: 0o600 });
     fs.renameSync(tmp, this.file);
+  }
+
+  /** Deletes blob files no clip refers to (left over from a crash, or history that couldn't be decrypted). */
+  private removeOrphanBlobs(): void {
+    const known = new Set(this.data.clips.filter((c) => c.kind !== 'text').map((c) => c.id));
+    for (const name of fs.readdirSync(this.blobDir)) {
+      if (!known.has(name)) fs.rmSync(path.join(this.blobDir, name), { force: true });
+    }
+  }
+
+  /** Streams to pipe a new blob into (encrypting it when a key is set). */
+  blobSink(id: string): [Writable] | [Writable, Writable] {
+    const file = fs.createWriteStream(this.blobPath(id), { mode: 0o600 });
+    return this.key ? [sealStream(this.key), file] : [file];
+  }
+
+  /** The blob's plaintext. */
+  openBlob(id: string): Readable {
+    return openBlob(this.blobPath(id), this.key);
+  }
+
+  /** Encrypts files saved before encryption was turned on. Returns how many were converted. */
+  async encryptExistingBlobs(): Promise<number> {
+    if (!this.key) return 0;
+    let n = 0;
+    for (const c of this.data.clips) {
+      if (c.kind === 'text') continue;
+      const file = this.blobPath(c.id);
+      if (!fs.existsSync(file) || isSealedFile(file)) continue;
+      const tmp = `${file}.tmp`;
+      try {
+        await pipeline(fs.createReadStream(file), sealStream(this.key), fs.createWriteStream(tmp, { mode: 0o600 }));
+        // the clip may have been pruned meanwhile
+        if (fs.existsSync(file)) fs.renameSync(tmp, file);
+        else fs.rmSync(tmp, { force: true });
+        n++;
+      } catch (err) {
+        fs.rmSync(tmp, { force: true });
+        throw err;
+      }
+    }
+    return n;
   }
 
   // ---- devices ----

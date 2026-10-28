@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { matchesApp } from '../src/frontApp.js';
 import { isNewer } from '../src/version.js';
 import type { DiscoveredHub } from '@omniclip/hub';
 import { EchoGuard } from '../src/echoGuard.js';
@@ -64,5 +65,20 @@ describe('isNewer', () => {
     expect(isNewer('0.3.0', '0.3.0')).toBe(false);
     expect(isNewer('0.2.9', '0.3.0')).toBe(false);
     expect(isNewer('1.0', '0.99.99')).toBe(true);
+  });
+});
+
+describe('matchesApp', () => {
+  it('matches app names regardless of case, versions and .exe', () => {
+    expect(matchesApp(['1Password 7'], ['1password'])).toBe('1password');
+    expect(matchesApp(['KeePassXC.exe', 'KeePassXC'], ['KeePassXC'])).toBe('KeePassXC');
+    expect(matchesApp(['Bitwarden'], ['1Password', 'Bitwarden'])).toBe('Bitwarden');
+  });
+
+  it("doesn't match other apps that merely contain the name", () => {
+    expect(matchesApp(['Xcode'], ['Code'])).toBeNull();
+    expect(matchesApp(['Passwords'], ['1Password'])).toBeNull();
+    expect(matchesApp([], ['1Password'])).toBeNull();
+    expect(matchesApp(['Safari'], [])).toBeNull();
   });
 });

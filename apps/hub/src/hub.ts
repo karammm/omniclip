@@ -13,6 +13,7 @@ import type { WebSocket } from 'ws';
 import {
   HUB_PORT_HTTP,
   HUB_PORT_TLS,
+  MAX_RICH_BYTES,
   MAX_TEXT_BYTES,
   MAX_UPLOAD_BYTES,
   PROTOCOL_VERSION,
@@ -47,6 +48,8 @@ export interface HubOptions {
   extraIps?: string[];
   /** How long passwords and codes live (tests shorten it). */
   sensitiveTtlMs?: number;
+  /** 32-byte key: clips and files are encrypted on disk with it. */
+  historyKey?: Buffer;
   log?: (msg: string) => void;
 }
 
@@ -55,6 +58,12 @@ export interface ClipOptions {
   to?: DeviceRecord;
   /** true: the sender says it's a secret (e.g. copied from a password manager); false: don't guess. */
   sensitive?: boolean;
+}
+
+/** Formatting that came with copied text. */
+export interface RichText {
+  html?: string;
+  rtf?: string;
 }
 
 export class ClipError extends Error {
@@ -96,7 +105,10 @@ export class Hub extends EventEmitter {
     this.store = new Store(
       opts.dataDir,
       opts.seedRegistry ? { networkId: opts.seedRegistry.networkId, devices: opts.seedRegistry.devices } : undefined,
+      undefined,
+      opts.historyKey,
     );
+    if (this.store.historyLost) this.log('saved history could not be decrypted (the key changed); starting a new history');
     this.rotatePairingCode();
   }
 
@@ -153,6 +165,10 @@ export class Hub extends EventEmitter {
     await tls.listen({ port: this.opts.portTls, host: '0.0.0.0' });
     await http.listen({ port: this.opts.portHttp, host: '0.0.0.0' });
     this.rotateTimer = setInterval(() => this.getPairingCode(), 30_000);
+    this.store
+      .encryptExistingBlobs()
+      .then((n) => n && this.log(`encrypted ${n} saved file(s)`))
+      .catch((err) => this.log(`could not encrypt saved files: ${String(err)}`));
     this.log(`hub ${this.networkId} listening on ${this.urls().tls.join(', ') || `:${this.opts.portTls}`}`);
   }
 
@@ -224,12 +240,18 @@ export class Hub extends EventEmitter {
 
   // ---- clips ----
 
-  addTextClip(device: DeviceRecord, text: string, opts: ClipOptions = {}): Clip {
+  addTextClip(device: DeviceRecord, text: string, opts: ClipOptions = {}, rich: RichText = {}): Clip {
     const sensitive = opts.sensitive ?? detectSensitive(text) !== null;
+    // secrets are kept as bare text; formatting that's too big is dropped
+    const keep = (v?: string) => (!sensitive && v && Buffer.byteLength(v) <= MAX_RICH_BYTES ? v : undefined);
+    const html = keep(rich.html);
+    const rtf = keep(rich.rtf);
     const clip: Clip = {
       id: crypto.randomUUID(),
       kind: 'text',
       text,
+      ...(html ? { html } : {}),
+      ...(rtf ? { rtf } : {}),
       mime: 'text/plain',
       size: Buffer.byteLength(text),
       hash: crypto.createHash('sha256').update(text).digest('hex'),
@@ -251,6 +273,7 @@ export class Hub extends EventEmitter {
     filename: string | undefined,
     forceFile: boolean,
     opts: ClipOptions,
+    folder = false,
   ): Promise<Clip | null> {
     const id = crypto.randomUUID();
     const dest = this.store.blobPath(id);
@@ -264,7 +287,7 @@ export class Hub extends EventEmitter {
       },
     });
     try {
-      await pipeline(source, tap, fs.createWriteStream(dest));
+      await pipeline(source, tap, ...this.store.blobSink(id));
     } catch (err) {
       fs.rmSync(dest, { force: true });
       throw err;
@@ -274,7 +297,8 @@ export class Hub extends EventEmitter {
       return null;
     }
     const mime = mimeType || 'application/octet-stream';
-    const kind = forceFile || !mime.startsWith('image/') ? 'file' : 'image';
+    const isFolder = folder && mime === 'application/zip';
+    const kind = forceFile || isFolder || !mime.startsWith('image/') ? 'file' : 'image';
     const ext = mime.split('/')[1]?.replace(/[^a-z0-9]/gi, '') || 'bin';
     const clip: Clip = {
       id,
@@ -282,6 +306,7 @@ export class Hub extends EventEmitter {
       mime,
       size,
       name: filename || (kind === 'image' ? `image.${ext}` : `file.${ext}`),
+      ...(isFolder ? { folder: true } : {}),
       hash: hash.digest('hex'),
       sourceDeviceId: device.id,
       sourceName: device.name,
@@ -354,7 +379,7 @@ export class Hub extends EventEmitter {
   }
 
   private buildServer(https?: { key: string; cert: string }): FastifyInstance {
-    const app = Fastify({ logger: false, bodyLimit: MAX_TEXT_BYTES * 2, ...(https ? { https } : {}) }) as unknown as FastifyInstance;
+    const app = Fastify({ logger: false, bodyLimit: (MAX_TEXT_BYTES + 2 * MAX_RICH_BYTES) * 2, ...(https ? { https } : {}) }) as unknown as FastifyInstance;
 
     app.register(fastifyMultipart, { limits: { fileSize: MAX_UPLOAD_BYTES, files: 1 } });
     app.register(fastifyWebsocket);
@@ -466,8 +491,8 @@ export class Hub extends EventEmitter {
       if (req.isMultipart()) {
         const part = await req.file();
         if (!part) return reply.code(400).send({ error: 'no file' });
-        const kindField = part.fields.kind as { value?: string } | undefined;
-        const clip = await this.addBlobClip(device, part.file, part.mimetype, part.filename, kindField?.value === 'file', opts);
+        const field = (name: string) => (part.fields[name] as { value?: string } | undefined)?.value;
+        const clip = await this.addBlobClip(device, part.file, part.mimetype, part.filename, field('kind') === 'file', opts, field('folder') === '1');
         return clip ?? reply.code(413).send({ error: 'file too large' });
       }
 
@@ -478,11 +503,11 @@ export class Hub extends EventEmitter {
         return this.addBlobClip(device, Readable.from([req.body]), mime, name, false, opts);
       }
 
-      // JSON {text} or a raw text/plain body (handy for Apple Shortcuts)
-      const text = typeof req.body === 'string' ? req.body : TextClipRequestSchema.safeParse(req.body).data?.text;
-      if (!text) return reply.code(400).send({ error: 'expected {"text": "..."} or a file upload' });
-      if (Buffer.byteLength(text) > MAX_TEXT_BYTES) return reply.code(413).send({ error: 'text too large' });
-      return this.addTextClip(device, text, opts);
+      // JSON {text, html?, rtf?} or a raw text/plain body (handy for Apple Shortcuts)
+      const body = typeof req.body === 'string' ? { text: req.body } : TextClipRequestSchema.safeParse(req.body).data;
+      if (!body?.text) return reply.code(400).send({ error: 'expected {"text": "..."} or a file upload' });
+      if (Buffer.byteLength(body.text) > MAX_TEXT_BYTES) return reply.code(413).send({ error: 'text too large' });
+      return this.addTextClip(device, body.text, opts, { html: body.html, rtf: body.rtf });
     });
 
     app.get('/api/clips/:id/blob', async (req, reply) => {
@@ -497,7 +522,7 @@ export class Hub extends EventEmitter {
         .header('Content-Length', clip.size)
         .header('Content-Disposition', `${disposition}; filename*=UTF-8''${name}`)
         .header('Cache-Control', 'private, max-age=31536000, immutable')
-        .send(fs.createReadStream(this.store.blobPath(clip.id)));
+        .send(this.store.openBlob(clip.id));
     });
 
     app.register(async (scope) => {

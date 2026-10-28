@@ -34,13 +34,17 @@ import java.util.List;
  * Native helpers for the web layer:
  * - pins the OmniClip network's certificate authority for HTTPS/WebSocket connections to the hub
  * - holds what other apps shared to OmniClip ("Share → OmniClip") until it is taken
- * - copies images to the clipboard as real images (the Capacitor clipboard plugin pastes them as text)
+ * - copies images to the clipboard as real images (the Capacitor clipboard plugin pastes them as text),
+ *   and text together with its formatting
+ * - remembers that the Quick Settings tile or the widget asked to send the clipboard
  */
 @CapacitorPlugin(name = "OmniClip")
 public class OmniClipPlugin extends Plugin {
 
+    static final String ACTION_SEND_CLIPBOARD = "com.omniclip.app.SEND_CLIPBOARD";
     private static final long MAX_BYTES = 50L * 1024 * 1024;
     private static final List<JSObject> pending = new ArrayList<>();
+    private static boolean sendClipboard;
     private static volatile X509Certificate trustedCa;
 
     @PluginMethod
@@ -81,10 +85,17 @@ public class OmniClipPlugin extends Plugin {
         }
     }
 
+    /** Opens OmniClip and asks it to send the clipboard (tile and widget). */
+    static Intent sendClipboardIntent(Context ctx) {
+        return new Intent(ctx, MainActivity.class).setAction(ACTION_SEND_CLIPBOARD).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+    }
+
     static synchronized void collect(Context ctx, Intent intent) {
         if (intent == null) return;
         String action = intent.getAction();
-        if (Intent.ACTION_SEND.equals(action)) {
+        if (ACTION_SEND_CLIPBOARD.equals(action)) {
+            sendClipboard = true;
+        } else if (Intent.ACTION_SEND.equals(action)) {
             Uri stream = intent.getParcelableExtra(Intent.EXTRA_STREAM);
             if (stream != null) addFile(ctx, stream);
             else {
@@ -143,13 +154,39 @@ public class OmniClipPlugin extends Plugin {
     @PluginMethod
     public void take(PluginCall call) {
         JSArray items = new JSArray();
+        boolean send;
         synchronized (OmniClipPlugin.class) {
             for (JSObject item : pending) items.put(item);
             pending.clear();
+            send = sendClipboard;
+            sendClipboard = false;
         }
         JSObject result = new JSObject();
         result.put("items", items);
+        result.put("sendClipboard", send);
         call.resolve(result);
+    }
+
+    /** Back to the app the user was in before the tile or widget opened OmniClip. */
+    @PluginMethod
+    public void moveToBack(PluginCall call) {
+        getActivity().runOnUiThread(() -> {
+            getActivity().moveTaskToBack(true);
+            call.resolve();
+        });
+    }
+
+    @PluginMethod
+    public void copyText(PluginCall call) {
+        String text = call.getString("text");
+        String html = call.getString("html");
+        if (text == null) {
+            call.reject("missing text");
+            return;
+        }
+        ClipboardManager cm = (ClipboardManager) getContext().getSystemService(Context.CLIPBOARD_SERVICE);
+        cm.setPrimaryClip(html != null ? ClipData.newHtmlText("OmniClip", text, html) : ClipData.newPlainText("OmniClip", text));
+        call.resolve();
     }
 
     @PluginMethod

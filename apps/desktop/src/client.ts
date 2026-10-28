@@ -79,6 +79,8 @@ export interface SendOptions {
   to?: string;
   /** Force (true) or skip (false) the hub's password detection. */
   sensitive?: boolean;
+  /** The upload is a zipped folder. */
+  folder?: boolean;
 }
 
 function clipsPath(opts: SendOptions = {}): string {
@@ -195,12 +197,12 @@ export class SyncClient extends EventEmitter<SyncClientEvents> {
     return { authorization: `Bearer ${this.token}` };
   }
 
-  async sendText(text: string, opts?: SendOptions): Promise<void> {
+  async sendText(text: string, opts?: SendOptions, rich: { html?: string; rtf?: string } = {}): Promise<void> {
     const res = await request(this.addr, clipsPath(opts), {
       method: 'POST',
       ca: this.caPem,
       headers: { ...this.auth(), 'content-type': 'application/json' },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, ...rich }),
     });
     if (res.status !== 200) throw new Error(`send failed (${res.status})`);
   }
@@ -208,7 +210,9 @@ export class SyncClient extends EventEmitter<SyncClientEvents> {
   async sendFile(data: Buffer, name: string, mime: string, asFile = false, opts?: SendOptions): Promise<void> {
     const boundary = `----omniclip${crypto.randomBytes(12).toString('hex')}`;
     const parts: Buffer[] = [];
-    if (asFile) parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="kind"\r\n\r\nfile\r\n`));
+    const field = (name: string, value: string) => Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`);
+    if (asFile) parts.push(field('kind', 'file'));
+    if (opts?.folder) parts.push(field('folder', '1'));
     const safeName = name.replace(/["\r\n]/g, '_');
     parts.push(
       Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${safeName}"\r\nContent-Type: ${mime}\r\n\r\n`),

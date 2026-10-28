@@ -29,13 +29,24 @@ function legacyCopy(text: string): boolean {
   return ok;
 }
 
-export async function copyText(text: string): Promise<boolean> {
+/** Copies text, with its formatting when there is some and the browser can hold it. */
+export async function copyText(text: string, html?: string): Promise<boolean> {
   if (NATIVE) {
     try {
-      await (await native()).writeText(text);
+      await (await native()).writeText(text, html);
       return true;
     } catch {
       return false;
+    }
+  }
+  if (html && canCopyImages) {
+    try {
+      await navigator.clipboard.write([
+        new ClipboardItem({ 'text/plain': new Blob([text], { type: 'text/plain' }), 'text/html': new Blob([html], { type: 'text/html' }) }),
+      ]);
+      return true;
+    } catch {
+      // fall back to plain text
     }
   }
   if (secure && navigator.clipboard?.writeText) {
@@ -91,7 +102,7 @@ export async function copyImage(url: string): Promise<boolean> {
   }
 }
 
-export type ClipboardContent = { kind: 'text'; text: string } | { kind: 'image'; blob: Blob } | null;
+export type ClipboardContent = { kind: 'text'; text: string; html?: string } | { kind: 'image'; blob: Blob } | null;
 
 export async function readClipboard(): Promise<ClipboardContent> {
   if (NATIVE) return (await native()).read();
@@ -103,7 +114,8 @@ export async function readClipboard(): Promise<ClipboardContent> {
       if (imageType) return { kind: 'image', blob: await item.getType(imageType) };
       if (item.types.includes('text/plain')) {
         const text = await (await item.getType('text/plain')).text();
-        if (text) return { kind: 'text', text };
+        const html = item.types.includes('text/html') ? await (await item.getType('text/html')).text() : undefined;
+        if (text) return { kind: 'text', text, ...(html ? { html } : {}) };
       }
     }
     return null;

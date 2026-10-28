@@ -16,18 +16,21 @@ import {
   globalShortcut,
   ipcMain,
   nativeImage,
+  safeStorage,
   screen,
   shell,
   systemPreferences,
   type MenuItemConstructorOptions,
 } from 'electron';
 import QRCode from 'qrcode';
-import { MAX_TEXT_BYTES, MAX_UPLOAD_BYTES, detectSensitive, type Clip, type Device, type Platform } from '@omniclip/protocol';
+import { MAX_RICH_BYTES, MAX_TEXT_BYTES, MAX_UPLOAD_BYTES, detectSensitive, type Clip, type Device, type Platform } from '@omniclip/protocol';
 import { Hub, advertise, discover, shutdownMdns, type DiscoveredHub } from '@omniclip/hub';
 import { SyncClient, pairWithHub, probe, type HubAddress, type SendOptions } from './client.js';
 import { ConfigStore, type Credential, type SensitiveMode } from './config.js';
 import { EchoGuard } from './echoGuard.js';
 import { decideRole, shouldStepDown } from './election.js';
+import { FolderError, measureFolder, unzipFolder, zipFolder } from './folders.js';
+import { frontAppNames, matchesApp } from './frontApp.js';
 import { renderPairPage } from './pairPage.js';
 import { renderPickerPage, type PickerItem } from './pickerPage.js';
 import { renderSettingsPage } from './settingsPage.js';
@@ -56,6 +59,21 @@ const PASTE_KEY = process.platform === 'darwin' ? '⌘V' : 'Ctrl+V';
 /** Shortcut choices offered in Settings ('' turns the picker shortcut off). */
 const HOTKEYS = ['CommandOrControl+Shift+V', 'CommandOrControl+Alt+V', 'CommandOrControl+Shift+Space', 'Alt+Shift+V', ''];
 const SENSITIVE_MODES: SensitiveMode[] = ['expire', 'skip', 'off'];
+/** On/off settings the Settings window may change. */
+const BOOLEAN_SETTINGS = [
+  'paused',
+  'sendCopiedFiles',
+  'filesToClipboard',
+  'autoPaste',
+  'sendText',
+  'sendImages',
+  'sendFormatting',
+  'receiveText',
+  'receiveImages',
+  'receiveFiles',
+] as const;
+/** Offered as one-click additions to the ignored apps. */
+const PASSWORD_MANAGERS = ['1Password', 'Bitwarden', 'KeePassXC', 'Dashlane', 'Proton Pass', ...(process.platform === 'darwin' ? ['Keychain Access', 'Passwords'] : [])];
 
 if (!app.requestSingleInstanceLock()) app.quit();
 if (process.platform === 'win32') app.setAppUserModelId('com.omniclip.app');
@@ -84,6 +102,10 @@ const state = {
   recent: [] as Clip[],
   pinned: [] as Clip[],
   hubDeviceId: '',
+  /** Whether the hub on this computer encrypts saved history ('' when this computer isn't the hub). */
+  historyEncryption: '' as '' | 'on' | 'unavailable',
+  /** Apps recently copied from, offered in Settings → Rules. */
+  recentApps: [] as string[],
 };
 
 let tray: Tray | null = null;
@@ -130,6 +152,7 @@ function openedAtLogin(): boolean {
 
 async function teardown(): Promise<void> {
   clearInterval(watchdog);
+  state.historyEncryption = '';
   state.client?.stop();
   state.client = null;
   state.stopAdvertising?.();
@@ -170,13 +193,47 @@ async function boot(): Promise<void> {
   }
 }
 
+/**
+ * The key that encrypts saved history, kept in the OS keychain (Keychain, DPAPI, or the Linux
+ * secret service) through safeStorage. Undefined when no keychain is available.
+ */
+async function historyKey(): Promise<Buffer | undefined> {
+  // without a keyring Linux falls back to a fixed password, which protects nothing
+  if (!(await safeStorage.isAsyncEncryptionAvailable()) || (process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text')) return undefined;
+  const file = path.join(userData, 'history.key');
+  try {
+    if (fs.existsSync(file)) {
+      const { result, shouldReEncrypt } = await safeStorage.decryptStringAsync(fs.readFileSync(file));
+      const key = Buffer.from(result, 'base64');
+      if (key.length === 32) {
+        if (shouldReEncrypt) fs.writeFileSync(file, await safeStorage.encryptStringAsync(result), { mode: 0o600 });
+        return key;
+      }
+    }
+  } catch (err) {
+    log(`history key unreadable, making a new one: ${String(err)}`);
+  }
+  const key = crypto.randomBytes(32);
+  fs.mkdirSync(userData, { recursive: true });
+  fs.writeFileSync(file, await safeStorage.encryptStringAsync(key.toString('base64')), { mode: 0o600 });
+  return key;
+}
+
 async function becomeHub(): Promise<void> {
   const seed = cfg.data.registry;
-  const hub = new Hub({ dataDir: path.join(userData, 'hub'), webDir, seedRegistry: seed, log });
+  let key: Buffer | undefined;
+  try {
+    key = await historyKey();
+  } catch (err) {
+    log(`history encryption unavailable: ${String(err)}`);
+  }
+  state.historyEncryption = key ? 'on' : 'unavailable';
+  const hub = new Hub({ dataDir: path.join(userData, 'hub'), webDir, seedRegistry: seed, historyKey: key, log });
   try {
     await hub.start();
   } catch (err) {
     state.error = (err as NodeJS.ErrnoException).code === 'EADDRINUSE' ? `Port ${hub.ports.tls} is already in use` : String(err);
+    state.historyEncryption = '';
     setRole('error');
     return;
   }
@@ -276,6 +333,8 @@ function attachClient(addr: HubAddress, cred: Credential, networkId: string): vo
     updateTray();
     settingsChanged();
     if (cfg.data.paused || clip.sourceDeviceId === state.deviceId) return;
+    // Settings → Rules; a clip sent to this computer alone always comes through
+    if (clip.targetDeviceId !== state.deviceId && !receives(clip)) return;
     void applyClip(clip, true);
     if (clip.targetDeviceId === state.deviceId && clip.kind !== 'file') {
       notify(`${clip.sourceName} sent you ${clip.kind === 'image' ? 'an image' : clip.sensitive ? 'a password or code' : 'some text'}`, `It's on your clipboard. Press ${PASTE_KEY} to paste.`);
@@ -291,6 +350,10 @@ function attachClient(addr: HubAddress, cred: Credential, networkId: string): vo
 }
 
 // ------------------------------------------------------------------ clipboard
+
+function receives(clip: Clip): boolean {
+  return clip.kind === 'text' ? cfg.data.receiveText : clip.kind === 'image' ? cfg.data.receiveImages : cfg.data.receiveFiles;
+}
 
 function sha(data: string | Buffer): string {
   return crypto.createHash('sha256').update(data).digest('hex');
@@ -335,6 +398,25 @@ async function readFilePaths(): Promise<string[]> {
   return [];
 }
 
+/** HTML and RTF that came with copied text (none if they're too big to send). */
+async function readRich(): Promise<{ html?: string; rtf?: string }> {
+  const rich: { html?: string; rtf?: string } = {};
+  try {
+    for (const item of await clipboard.read()) {
+      for (const [type, key] of [['text/html', 'html'], ['text/rtf', 'rtf']] as const) {
+        if (rich[key] || !item.types.includes(type)) continue;
+        let value = await ((await item.getType(type)) as Blob).text();
+        // Chromium adds this when reading; the receiving side adds its own
+        if (key === 'html') value = value.replace(/^<meta charset=['"]?utf-8['"]?>/i, '');
+        if (value && Buffer.byteLength(value) <= MAX_RICH_BYTES) rich[key] = value;
+      }
+    }
+  } catch (err) {
+    log(`could not read formatting: ${String(err)}`);
+  }
+  return rich;
+}
+
 async function snapshot(forceImage = false): Promise<Snapshot> {
   // before text: Finder also puts the file's name on the clipboard as plain text
   const paths = await readFilePaths();
@@ -362,27 +444,49 @@ async function exclusive<T>(fn: () => Promise<T>): Promise<T | undefined> {
   }
 }
 
+function sendsKind(kind: NonNullable<Snapshot>['kind']): boolean {
+  return kind === 'text' ? cfg.data.sendText : kind === 'image' ? cfg.data.sendImages : cfg.data.sendCopiedFiles;
+}
+
+/** The front app's name if it's one the user excluded. Also remembers recent apps for Settings. */
+async function ignoredFrontApp(): Promise<string | null> {
+  // asking Windows costs a PowerShell start, so only when there are rules to check
+  if (process.platform === 'win32' && !cfg.data.ignoredApps.length) return null;
+  const names = await frontAppNames();
+  const name = names.find((n) => n.trim());
+  if (name && !/^(omniclip|electron)$/i.test(name)) {
+    state.recentApps = [name, ...state.recentApps.filter((a) => a.toLowerCase() !== name.toLowerCase())].slice(0, 5);
+    settingsChanged();
+  }
+  return matchesApp(names, cfg.data.ignoredApps);
+}
+
 async function watchTick(): Promise<void> {
   const client = state.client;
   if (!client || client.status !== 'online' || cfg.data.paused) return;
-  const files = await exclusive(async () => {
+  const change = await exclusive(async () => {
     const snap = await snapshot();
     if (!snap || !guard.isLocalChange(snap.fp)) return;
-    if (snap.kind === 'files') return snap.paths; // uploaded outside the lock below
-    try {
-      if (snap.kind === 'text') {
-        const sensitive = await sensitiveOption(snap.text);
-        if (sensitive === 'skip') return;
-        if (Buffer.byteLength(snap.text) <= MAX_TEXT_BYTES) await client.sendText(snap.text, { sensitive });
-        else await client.sendFile(Buffer.from(snap.text), 'clipboard.txt', 'text/plain', true);
-      } else if (snap.png.length <= MAX_IMAGE_BYTES) {
-        await client.sendFile(snap.png, 'image.png', 'image/png');
-      }
-    } catch (err) {
-      log(`send failed: ${String(err)}`);
-    }
+    const rich = snap.kind === 'text' && cfg.data.sendText && cfg.data.sendFormatting ? await readRich() : {};
+    return { snap, rich };
   });
-  if (files && cfg.data.sendCopiedFiles) await sendCopiedFiles(files);
+  if (!change || !sendsKind(change.snap.kind)) return;
+  const { snap, rich } = change;
+  const app = await ignoredFrontApp();
+  if (app) return log(`not sending a copy made in ${app}`);
+  try {
+    if (snap.kind === 'files') await sendCopiedFiles(snap.paths);
+    else if (snap.kind === 'text') {
+      const sensitive = await sensitiveOption(snap.text);
+      if (sensitive === 'skip') return;
+      if (Buffer.byteLength(snap.text) <= MAX_TEXT_BYTES) await client.sendText(snap.text, { sensitive }, sensitive ? {} : rich);
+      else await client.sendFile(Buffer.from(snap.text), 'clipboard.txt', 'text/plain', true);
+    } else if (snap.png.length <= MAX_IMAGE_BYTES) {
+      await client.sendFile(snap.png, 'image.png', 'image/png');
+    }
+  } catch (err) {
+    log(`send failed: ${String(err)}`);
+  }
 }
 
 /** Password managers mark what they copy so clipboard tools can leave it alone. */
@@ -424,14 +528,28 @@ async function sendCopiedFiles(paths: string[]): Promise<void> {
       return null;
     }
   });
-  const files = stats.filter((s): s is { p: string; stat: fs.Stats } => !!s?.stat.isFile());
-  if (!files.length) return; // only folders were copied
-  const total = files.reduce((n, f) => n + f.stat.size, 0);
-  if (files.length > AUTO_FILES_MAX || total > AUTO_FILES_MAX_BYTES) {
-    notify('OmniClip', `${files.length} files (${Math.round(total / 1048576)} MB) are too many to send automatically. Use "Send file…" in the OmniClip menu.`);
+  const items = stats.filter((s): s is { p: string; stat: fs.Stats } => !!s && (s.stat.isFile() || s.stat.isDirectory()));
+  if (!items.length) return;
+  // folders count with everything inside them
+  let count = 0;
+  let total = 0;
+  for (const { p, stat } of items) {
+    if (stat.isFile()) {
+      count++;
+      total += stat.size;
+      continue;
+    }
+    const size = measureFolder(p, AUTO_FILES_MAX_BYTES - total, 5000);
+    count++;
+    total += size.bytes;
+    if (size.tooBig) total = Infinity;
+  }
+  if (count > AUTO_FILES_MAX || total > AUTO_FILES_MAX_BYTES) {
+    const what = Number.isFinite(total) ? `${count} items (${Math.round(total / 1048576)} MB)` : 'That folder';
+    notify('OmniClip', `${what} is too much to send automatically. Use "Send file…" in the OmniClip menu.`);
     return;
   }
-  await sendPaths(files.map((f) => f.p));
+  await sendPaths(items.map((f) => f.p));
 }
 
 function uniquePath(dir: string, name: string): string {
@@ -450,10 +568,23 @@ function downloadDir(): string {
 async function saveFile(clip: Clip, data: Buffer): Promise<void> {
   const dir = downloadDir();
   fs.mkdirSync(dir, { recursive: true });
-  const dest = uniquePath(dir, clip.name ?? 'file');
-  fs.writeFileSync(dest, data);
+  let dest: string;
+  if (clip.folder) {
+    try {
+      dest = await unzipFolder(data, dir, (clip.name ?? 'Folder').replace(/\.zip$/i, ''));
+    } catch (err) {
+      // keep the zip rather than lose the folder
+      log(`could not unpack ${clip.name}: ${String(err)}`);
+      dest = uniquePath(dir, clip.name ?? 'folder.zip');
+      fs.writeFileSync(dest, data);
+    }
+  } else {
+    dest = uniquePath(dir, clip.name ?? 'file');
+    fs.writeFileSync(dest, data);
+  }
+  const what = clip.folder && fs.statSync(dest).isDirectory() ? 'Folder' : 'File';
   const pasteHint = cfg.data.filesToClipboard ? ` Press ${PASTE_KEY} in a folder to paste it.` : '';
-  notify(`File from ${clip.sourceName}`, `${path.basename(dest)} saved to ${path.basename(dir)}.${pasteHint}`, () => shell.showItemInFolder(dest));
+  notify(`${what} from ${clip.sourceName}`, `${path.basename(dest)} saved to ${path.basename(dir)}.${pasteHint}`, () => shell.showItemInFolder(dest));
   if (cfg.data.filesToClipboard) queueFileForClipboard(dest);
 }
 
@@ -512,10 +643,20 @@ async function applyClip(clip: Clip, fromRemote: boolean): Promise<void> {
       if (!png.length) return await saveFile(clip, data); // e.g. HEIC on Windows
       return void (await writeClipboard(async () => clipboard.write([new ClipboardItem({ 'image/png': new Blob([new Uint8Array(png)], { type: 'image/png' }) })]), fromRemote));
     }
-    await writeClipboard(() => clipboard.writeText(clip.text ?? ''), fromRemote);
+    await writeClipboard(() => writeTextClip(clip), fromRemote);
   } catch (err) {
     log(`apply failed: ${String(err)}`);
   }
+}
+
+/** Writes text with its formatting, when it has any. */
+async function writeTextClip(clip: Clip): Promise<void> {
+  const text = clip.text ?? '';
+  if (!clip.html && !clip.rtf) return clipboard.writeText(text);
+  const types: Record<string, Blob> = { 'text/plain': new Blob([text], { type: 'text/plain' }) };
+  if (clip.html) types['text/html'] = new Blob([clip.html], { type: 'text/html' });
+  if (clip.rtf) types['text/rtf'] = new Blob([clip.rtf], { type: 'text/rtf' });
+  await clipboard.write([new ClipboardItem(types)]);
 }
 
 async function writeClipboard(write: () => Promise<void>, fromRemote: boolean): Promise<void> {
@@ -540,6 +681,11 @@ async function sendPaths(paths: string[], to?: string): Promise<void> {
   for (const p of paths) {
     try {
       const stat = fs.statSync(p);
+      if (stat.isDirectory()) {
+        const zipped = await zipFolder(p, MAX_UPLOAD_BYTES);
+        await client.sendFile(zipped.data, `${zipped.name}.zip`, 'application/zip', true, { to, folder: true });
+        continue;
+      }
       if (!stat.isFile()) continue;
       if (stat.size > MAX_UPLOAD_BYTES) {
         notify('OmniClip', `${path.basename(p)} is larger than 200 MB`);
@@ -548,7 +694,7 @@ async function sendPaths(paths: string[], to?: string): Promise<void> {
       const mime = MIME[path.extname(p).toLowerCase()] ?? 'application/octet-stream';
       await client.sendFile(fs.readFileSync(p), path.basename(p), mime, true, { to });
     } catch (err) {
-      notify('OmniClip', `Could not send ${path.basename(p)}: ${String(err)}`);
+      notify('OmniClip', err instanceof FolderError ? err.message : `Could not send ${path.basename(p)}: ${String(err)}`);
     }
   }
 }
@@ -576,7 +722,7 @@ async function sendClipboardTo(device: Device): Promise<void> {
   else {
     const sensitive = await sensitiveOption(snap.text);
     if (sensitive === 'skip') throw new Error('That looks like a password or code, and Settings say never to send those.');
-    await client.sendText(snap.text, { to, sensitive });
+    await client.sendText(snap.text, { to, sensitive }, sensitive || !cfg.data.sendFormatting ? {} : await readRich());
   }
   notify('OmniClip', `Sent your clipboard to ${device.name}`);
 }
@@ -585,13 +731,16 @@ async function sendClipboardTo(device: Device): Promise<void> {
 async function resendClip(clip: Clip, device: Device): Promise<void> {
   const client = connectedClient();
   const opts: SendOptions = { to: device.id };
-  if (clip.kind === 'text') await client.sendText(clip.text ?? '', { ...opts, sensitive: !!clip.sensitive });
-  else await client.sendFile(await client.fetchBlob(clip), clip.name ?? 'file', clip.mime, clip.kind === 'file', opts);
+  if (clip.kind === 'text') await client.sendText(clip.text ?? '', { ...opts, sensitive: !!clip.sensitive }, { html: clip.html, rtf: clip.rtf });
+  else await client.sendFile(await client.fetchBlob(clip), clip.name ?? 'file', clip.mime, clip.kind === 'file', { ...opts, folder: clip.folder });
   notify('OmniClip', `Sent to ${device.name}`);
 }
 
-async function chooseAndSendFiles(device?: Device): Promise<void> {
-  const res = await dialog.showOpenDialog({ title: device ? `Send to ${device.name}` : 'Send to all devices', properties: ['openFile', 'multiSelections'] });
+/** macOS can pick files and folders in one dialog; Windows and Linux need one or the other. */
+async function chooseAndSendFiles(device?: Device, folders = false): Promise<void> {
+  const properties: Electron.OpenDialogOptions['properties'] =
+    process.platform === 'darwin' ? ['openFile', 'openDirectory', 'multiSelections'] : folders ? ['openDirectory', 'multiSelections'] : ['openFile', 'multiSelections'];
+  const res = await dialog.showOpenDialog({ title: device ? `Send to ${device.name}` : 'Send to all devices', properties });
   if (!res.canceled) await sendPaths(res.filePaths, device?.id);
 }
 
@@ -632,7 +781,7 @@ function sourceLabel(c: Clip): string {
 
 function pickerItem(c: Clip): PickerItem {
   const label = c.kind !== 'text' ? (c.name ?? c.kind) : c.sensitive ? secretLabel(c) : (c.text ?? '').replace(/\s+/g, ' ').trim().slice(0, 200);
-  return { id: c.id, kind: c.kind, label, source: sourceLabel(c), createdAt: c.createdAt, pinned: !!c.pinned, sensitive: !!c.sensitive };
+  return { id: c.id, kind: c.kind, label, source: sourceLabel(c), createdAt: c.createdAt, pinned: !!c.pinned, sensitive: !!c.sensitive, folder: !!c.folder };
 }
 
 async function pickerClips(query: string): Promise<Clip[]> {
@@ -833,7 +982,7 @@ function clipLabel(c: Clip): string {
     const t = c.sensitive ? secretLabel(c) : (c.text ?? '').replace(/\s+/g, ' ').trim();
     return `${t.length > 42 ? `${t.slice(0, 42)}…` : t}   (${src})`;
   }
-  return `${c.kind === 'image' ? '🖼' : '📄'} ${c.name ?? c.kind}   (${src})`;
+  return `${c.kind === 'image' ? '🖼' : c.folder ? '📁' : '📄'} ${c.name ?? c.kind}   (${src})`;
 }
 
 // ------------------------------------------------------------------ settings window
@@ -888,6 +1037,17 @@ function settingsState() {
     hotkeys: HOTKEYS.map((value) => ({ value, label: acceleratorLabel(value) })),
     hotkeyError,
     autoPaste: cfg.data.autoPaste,
+    sendText: cfg.data.sendText,
+    sendImages: cfg.data.sendImages,
+    sendFormatting: cfg.data.sendFormatting,
+    receiveText: cfg.data.receiveText,
+    receiveImages: cfg.data.receiveImages,
+    receiveFiles: cfg.data.receiveFiles,
+    ignoredApps: cfg.data.ignoredApps,
+    suggestedApps: [...new Set([...state.recentApps, ...PASSWORD_MANAGERS])].filter((a) => !matchesApp([a], cfg.data.ignoredApps)),
+    frontAppHint: process.platform === 'linux' ? 'Needs xdotool, and works on X11 only.' : '',
+    historyEncryption: state.historyEncryption,
+    hubLabel: state.hubLabel,
   };
 }
 
@@ -915,13 +1075,21 @@ ipcMain.handle('settings:set', (_e, key: string, value: unknown) => {
     else throw new Error(`bad value for ${key}`);
     cfg.save();
     if (key === 'hotkey') registerHotkey();
-  } else if (key === 'paused' || key === 'sendCopiedFiles' || key === 'filesToClipboard' || key === 'autoPaste') {
-    cfg.data[key] = on;
+  } else if ((BOOLEAN_SETTINGS as readonly string[]).includes(key)) {
+    cfg.data[key as (typeof BOOLEAN_SETTINGS)[number]] = on;
     cfg.save();
     // don't flush whatever was copied while paused
     if (key === 'paused') void snapshot(true).then((snap) => guard.prime(snap?.fp ?? null));
   } else throw new Error(`unknown setting ${key}`);
   updateTray();
+  settingsChanged();
+});
+ipcMain.handle('settings:ignoreApp', (_e, name: string, ignore: boolean) => {
+  const clean = String(name).trim().slice(0, 100);
+  if (!clean) throw new Error('Type the name of the app.');
+  const rest = cfg.data.ignoredApps.filter((a) => a.toLowerCase() !== clean.toLowerCase());
+  cfg.data.ignoredApps = ignore ? [...rest, clean] : rest;
+  cfg.save();
   settingsChanged();
 });
 ipcMain.handle('settings:rename', async (_e, name: string) => {
@@ -1034,15 +1202,7 @@ function updateTray(): void {
         click: () => sendClipboardTo(d).catch((err) => notify('OmniClip', err instanceof Error ? err.message : String(err))),
       })),
     },
-    {
-      label: 'Send file',
-      enabled: connected,
-      submenu: [
-        { label: 'To all devices…', click: () => void chooseAndSendFiles() },
-        ...(otherDevices().length ? [{ type: 'separator' as const }] : []),
-        ...otherDevices().map((d) => ({ label: `To ${d.name}…`, click: () => void chooseAndSendFiles(d) })),
-      ],
-    },
+    ...sendFileMenus(connected),
     { type: 'separator' },
     {
       label: 'Pause syncing',
@@ -1078,6 +1238,20 @@ function updateTray(): void {
   );
   tray.setContextMenu(Menu.buildFromTemplate(template));
   tray.setToolTip(`OmniClip: ${stateLabel()}`);
+}
+
+/** "Send file or folder" on macOS; separate "Send file" and "Send folder" menus elsewhere. */
+function sendFileMenus(connected: boolean): MenuItemConstructorOptions[] {
+  const menu = (label: string, folders: boolean): MenuItemConstructorOptions => ({
+    label,
+    enabled: connected,
+    submenu: [
+      { label: 'To all devices…', click: () => void chooseAndSendFiles(undefined, folders) },
+      ...(otherDevices().length ? [{ type: 'separator' as const }] : []),
+      ...otherDevices().map((d) => ({ label: `To ${d.name}…`, click: () => void chooseAndSendFiles(d, folders) })),
+    ],
+  });
+  return process.platform === 'darwin' ? [menu('Send file or folder', false)] : [menu('Send file', false), menu('Send folder', true)];
 }
 
 function setRole(role: Role): void {
