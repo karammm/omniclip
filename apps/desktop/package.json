@@ -1,7 +1,7 @@
 {
   "name": "@omniclip/desktop",
   "productName": "OmniClip",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "license": "MIT",
   "private": true,
   "description": "One clipboard for every device on your Wi-Fi",
@@ -13,13 +13,14 @@
   "scripts": {
     "build": "node build.mjs",
     "dev": "node build.mjs && electron .",
-    "dist:mac": "node build.mjs && electron-builder --mac --publish never",
-    "dist:win": "node build.mjs && electron-builder --win --publish never",
-    "dist:linux": "node build.mjs && electron-builder --linux --publish never"
+    "dist:mac": "node build.mjs && electron-builder --mac --publish never --config builder.config.cjs",
+    "dist:win": "node build.mjs && electron-builder --win --publish never --config builder.config.cjs",
+    "dist:linux": "node build.mjs && electron-builder --linux --publish never --config builder.config.cjs"
   },
   "devDependencies": {
-    "@omniclip/hub": "0.6.0",
-    "@omniclip/protocol": "0.6.0",
+    "@omniclip/hub": "0.7.0",
+    "@omniclip/protocol": "0.7.0",
+    "@omniclip/ui": "0.7.0",
     "electron": "45.0.0",
     "electron-builder": "^26.0.0",
     "electron-updater": "^6.8.11",
@@ -126,7 +127,7 @@
       "runAfterFinish": true,
       "artifactName": "OmniClip-Setup-${version}-${arch}.${ext}"
     },
-    "copyright": "Copyright © 2026 karammm",
+    "copyright": "Copyright \u00a9 2026 karammm",
     "artifactName": "OmniClip-${version}-${os}-${arch}.${ext}",
     "npmRebuild": false,
     "dmg": {

@@ -1,3 +1,4 @@
+import { execFile } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import path from 'node:path';
 import { app, net, shell } from 'electron';
@@ -9,35 +10,49 @@ const CHECK_EVERY_MS = 6 * 60 * 60 * 1000;
 
 export interface UpdateInfo {
   version: string;
-  /** Windows .exe and Linux AppImage installs download in the background; everything else links to the release page. */
+  /** Signed Mac apps, Windows .exe and Linux AppImage installs download in the background; everything else links to the release page. */
   ready: boolean;
   url: string;
 }
 
 /**
- * Background installs only work for the per-user Windows installer (.exe) and the Linux AppImage;
- * macOS needs a signed app, and MSI and .deb installs are managed by the system. Those get a
- * notification with a download link instead.
+ * Background installs work for a Developer ID–signed Mac app, the per-user Windows installer (.exe)
+ * and the Linux AppImage. Unsigned Mac builds can't replace themselves, and MSI and .deb installs are
+ * managed by the system; those get a notification with a download link instead.
  */
-function canAutoInstall(): boolean {
+async function canAutoInstall(): Promise<boolean> {
+  if (process.platform === 'darwin') return isDeveloperIdSigned();
   if (process.platform === 'linux') return !!process.env.APPIMAGE;
   if (process.platform !== 'win32' || !process.env.LOCALAPPDATA) return false;
   return path.resolve(process.execPath).toLowerCase().startsWith(path.resolve(process.env.LOCALAPPDATA).toLowerCase());
 }
 
+/** True when this .app is signed with a Developer ID certificate (not ad-hoc), which the macOS updater requires. */
+function isDeveloperIdSigned(): Promise<boolean> {
+  const bundle = path.resolve(process.execPath, '../../..');
+  return new Promise((resolve) =>
+    execFile('codesign', ['-dv', '--verbose=2', bundle], { timeout: 5000 }, (err, _out, details) =>
+      resolve(!err && /^Authority=Developer ID Application:/m.test(String(details))),
+    ),
+  );
+}
+
 export class Updater extends EventEmitter<{ available: [UpdateInfo] }> {
   available: UpdateInfo | null = null;
   private timer?: NodeJS.Timeout;
-  private readonly auto = canAutoInstall();
+  private auto = false;
+  private readonly ready: Promise<void>;
 
   constructor(private log: (msg: string) => void) {
     super();
-    if (this.auto) {
+    this.ready = (app.isPackaged ? canAutoInstall() : Promise.resolve(false)).then((auto) => {
+      this.auto = auto;
+      if (!auto) return;
       const { autoUpdater } = electronUpdater;
       autoUpdater.autoDownload = true;
       autoUpdater.on('update-downloaded', (info) => this.found({ version: info.version, ready: true, url: releaseUrl(info.version) }));
       autoUpdater.on('error', (err) => this.log(`auto-update failed: ${String(err)}`));
-    }
+    });
   }
 
   start(): void {
@@ -52,6 +67,7 @@ export class Updater extends EventEmitter<{ available: [UpdateInfo] }> {
 
   async check(): Promise<UpdateInfo | null> {
     try {
+      await this.ready;
       if (this.auto) {
         await electronUpdater.autoUpdater.checkForUpdates();
         return this.available;

@@ -24,6 +24,8 @@ import {
 } from './api';
 import { canCopyImages, canReadClipboard, copyImage, copyText, readClipboard, secure } from './clipboard';
 import { findHub } from './discovery';
+import { Icon } from './Icon';
+import { platformIcon, type IconName } from '@omniclip/ui';
 import { Setup } from './Setup';
 import { useHub, type Status } from './useHub';
 import type { SharedItem } from './native';
@@ -118,10 +120,11 @@ export function App() {
   else if (!ready)
     page = (
       <main class="center">
-        <img src="/icons/icon-192.png" alt="" width={72} height={72} />
-        <p class="muted">Connecting to your OmniClip hub…</p>
+        <HeroLogo pulse />
+        <h1>Connecting…</h1>
+        <p class="lead">Looking for your OmniClip hub on this Wi-Fi.</p>
         {startError && <p class="muted small">Still trying: {startError}</p>}
-        <button class="ghost" onClick={signOut}>
+        <button class="linkish" onClick={signOut}>
           Pair with a different hub
         </button>
       </main>
@@ -131,12 +134,34 @@ export function App() {
   return (
     <>
       {page}
-      {toast && <div class="toast">{toast}</div>}
+      {toast && (
+        <div class="toast" role="status">
+          <Icon name="check" />
+          {toast}
+        </div>
+      )}
     </>
   );
 }
 
 // ---------------------------------------------------------------- pairing
+
+function HeroLogo({ pulse }: { pulse?: boolean }) {
+  return (
+    <div class={pulse ? 'hero-logo pulse' : 'hero-logo'}>
+      <img src="/icons/icon-192.png" alt="" width={84} height={84} />
+    </div>
+  );
+}
+
+function ErrorNote({ text }: { text: string }) {
+  return (
+    <p class="error" role="alert">
+      <Icon name="x" size="sm" />
+      <span>{text}</span>
+    </p>
+  );
+}
 
 function PairScreen({ onPaired }: { onPaired: (s: Session) => void }) {
   const platform = detectPlatform();
@@ -164,24 +189,35 @@ function PairScreen({ onPaired }: { onPaired: (s: Session) => void }) {
 
   return (
     <main class="center">
-      <img src="/icons/icon-192.png" alt="" width={72} height={72} />
+      <HeroLogo />
       <h1>Join OmniClip</h1>
-      <p class="muted">Enter the 6-digit code shown in the OmniClip menu on your Mac or PC.</p>
-      <form class="card stack" onSubmit={submit}>
+      <p class="lead">Enter the 6-digit code shown in the OmniClip window on your Mac or PC.</p>
+      <form class="card form-card" onSubmit={submit}>
         <label>
           Pairing code
-          <input inputMode="numeric" autoComplete="one-time-code" maxLength={16} value={code} onInput={(e) => setCode(e.currentTarget.value)} required />
+          <input
+            class="field code-input"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            placeholder="000000"
+            maxLength={16}
+            value={code}
+            onInput={(e) => setCode(e.currentTarget.value)}
+            required
+          />
         </label>
         <label>
           This device's name
-          <input value={name} maxLength={64} onInput={(e) => setName(e.currentTarget.value)} />
+          <input class="field" value={name} maxLength={64} onInput={(e) => setName(e.currentTarget.value)} />
         </label>
-        {error && <p class="error">{error}</p>}
-        <button class="primary" disabled={busy || code.length < 4}>
+        {error && <ErrorNote text={error} />}
+        <button class="btn primary lg" disabled={busy || code.length < 4}>
           {busy ? 'Pairing…' : 'Pair this device'}
         </button>
       </form>
-      <a href={`/setup${location.hash}`}>Setup help</a>
+      <a class="linkish" href={`/setup${location.hash}`}>
+        Need help setting up?
+      </a>
     </main>
   );
 }
@@ -261,18 +297,24 @@ function NativePairScreen({ onPaired }: { onPaired: (s: Session) => void }) {
 
   return (
     <main class="center">
-      <img src="/icons/icon-192.png" alt="" width={72} height={72} />
+      <HeroLogo />
       <h1>Join OmniClip</h1>
-      <p class="muted">
-        On your Mac or PC, open the OmniClip window (or choose <b>Pair a phone or tablet…</b> in its menu), then scan the QR code.
-      </p>
-      <button class="primary big" onClick={scan} disabled={busy}>
-        {busy ? 'Pairing…' : '📷 Scan QR code'}
+      <p class="lead">One clipboard for your phone, tablet and computers on this Wi-Fi.</p>
+      <button class="btn primary cta" onClick={scan} disabled={busy}>
+        {busy ? <span class="spinner" /> : <Icon name="qr" />}
+        {busy ? 'Pairing…' : 'Scan QR code'}
       </button>
-      <details class="card manual">
-        <summary>Enter the code instead</summary>
+      {error && <ErrorNote text={error} />}
+      <ol class="steps">
+        <li>Open OmniClip on your Mac or PC (or choose Pair a phone or tablet… in its menu).</li>
+        <li>Tap Scan QR code and point the camera at the code in that window.</li>
+      </ol>
+      <details class="manual">
+        <summary>
+          Enter the code instead <Icon name="chevron" size="sm" />
+        </summary>
         <form
-          class="stack"
+          class="card form-card"
           onSubmit={(e) => {
             e.preventDefault();
             void connect(hub, code);
@@ -280,22 +322,39 @@ function NativePairScreen({ onPaired }: { onPaired: (s: Session) => void }) {
         >
           <label>
             Hub address
-            <input inputMode="url" autoCapitalize="off" autoCorrect="off" placeholder="192.168.1.5" value={hub} onInput={(e) => setHub(e.currentTarget.value)} required />
+            <input
+              class="field"
+              inputMode="url"
+              autoCapitalize="off"
+              autoCorrect="off"
+              placeholder="192.168.1.5"
+              value={hub}
+              onInput={(e) => setHub(e.currentTarget.value)}
+              required
+            />
           </label>
           <label>
             Pairing code
-            <input inputMode="numeric" autoComplete="one-time-code" maxLength={16} value={code} onInput={(e) => setCode(e.currentTarget.value)} required />
+            <input
+              class="field code-input"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              placeholder="000000"
+              maxLength={16}
+              value={code}
+              onInput={(e) => setCode(e.currentTarget.value)}
+              required
+            />
           </label>
           <label>
             This device's name
-            <input value={name} maxLength={64} onInput={(e) => setName(e.currentTarget.value)} />
+            <input class="field" value={name} maxLength={64} onInput={(e) => setName(e.currentTarget.value)} />
           </label>
-          <button class="primary" disabled={busy || code.length < 4 || !hub.trim()}>
+          <button class="btn primary lg" disabled={busy || code.length < 4 || !hub.trim()}>
             Pair this device
           </button>
         </form>
       </details>
-      {error && <p class="error">{error}</p>}
     </main>
   );
 }
@@ -573,20 +632,27 @@ function Main({
     }, 'Shared to all devices');
   }, []);
 
+  const platformOf = (id: string) => devices.find((d) => d.id === id)?.platform;
+  const row = (c: Clip) => <ClipRow key={c.id} clip={c} session={session} platform={platformOf(c.sourceDeviceId)} toast={toast} onPin={togglePin} />;
+  const recent = clips.filter((c) => !c.pinned);
+
   return (
     <main class="app">
       {incoming.length > 0 && <ShareSheet items={incoming} devices={others} onSend={(d) => sendShared(incoming, d)} onCancel={() => setIncoming([])} />}
-      <header class="bar">
-        <img src="/icons/icon-192.png" alt="" width={28} height={28} />
-        <strong>OmniClip</strong>
+      <header class="topbar">
+        <div class="brand">
+          <img class="logo" src="/icons/icon-192.png" alt="" width={30} height={30} />
+          OmniClip
+        </div>
         <StatusPill status={status} searching={searching} />
+        <span class="spacer" />
         {NATIVE ? (
-          <button class="ghost" aria-label="Settings" onClick={() => setSettingsOpen(!settingsOpen)}>
-            ⚙︎
+          <button class={settingsOpen ? 'btn ghost icon on' : 'btn ghost icon'} aria-label="Settings" aria-expanded={settingsOpen} onClick={() => setSettingsOpen(!settingsOpen)}>
+            <Icon name={settingsOpen ? 'x' : 'sliders'} />
           </button>
         ) : (
-          <a class="ghost" href="/setup" aria-label="Setup">
-            ⚙︎
+          <a class="btn ghost icon" href="/setup" aria-label="Setup">
+            <Icon name="sliders" />
           </a>
         )}
       </header>
@@ -595,84 +661,90 @@ function Main({
 
       {!secure && (
         <p class="banner">
-          Basic mode. Copy works, but to send you have to paste into the box below. <a href="/setup">Turn on secure mode</a>
+          <Icon name="lock" />
+          <span>
+            Basic mode: copying works, but to send you paste into the box below. <a href="/setup">Turn on secure mode</a>
+          </span>
         </p>
       )}
 
-      {others.length > 0 && (
-        <label class="target">
-          <span>Send to</span>
-          <select value={target} onChange={(e) => setTarget(e.currentTarget.value)}>
-            <option value="">All devices</option>
+      <section class="card panel">
+        {others.length > 0 && (
+          <div class="targets" role="radiogroup" aria-label="Send to">
+            <button class={target ? 'chip' : 'chip active'} role="radio" aria-checked={!target} onClick={() => setTarget('')}>
+              <Icon name="devices" size="sm" />
+              All devices
+            </button>
             {others.map((d) => (
-              <option key={d.id} value={d.id}>
+              <button key={d.id} class={target === d.id ? 'chip active' : 'chip'} role="radio" aria-checked={target === d.id} onClick={() => setTarget(d.id)}>
+                <Icon name={platformIcon(d.platform)} size="sm" />
                 {d.name}
-                {d.online ? '' : ' (offline)'}
-              </option>
+                <span class={d.online ? 'dot on' : 'dot'} title={d.online ? 'Online' : 'Offline'} />
+              </button>
             ))}
-          </select>
-        </label>
-      )}
-
-      <section class="actions">
-        {canReadClipboard && (
-          <button class="primary big" onClick={pasteAndSend} disabled={busy}>
-            📋 Paste &amp; Send
-          </button>
+          </div>
         )}
-        <button class="big" onClick={() => fileInput.current?.click()} disabled={busy}>
-          📎 Send photo or file
-        </button>
-        <input ref={fileInput} type="file" multiple hidden onChange={(e) => onFiles(e.currentTarget.files)} />
+
+        <div class="send-row">
+          {canReadClipboard && (
+            <button class="btn primary send-main" onClick={pasteAndSend} disabled={busy}>
+              <span class="ico">{busy ? <span class="spinner" /> : <Icon name="clipboard" size="lg" />}</span>
+              <span class="t">
+                <b>Paste &amp; Send</b>
+                <small>{targetDevice ? `to ${targetDevice.name}` : 'to all your devices'}</small>
+              </span>
+            </button>
+          )}
+          <button class={canReadClipboard ? 'btn send-file' : 'btn send-file wide'} onClick={() => fileInput.current?.click()} disabled={busy}>
+            <Icon name="paperclip" size="lg" />
+            {canReadClipboard ? 'File' : 'Send a photo or file'}
+          </button>
+          <input ref={fileInput} type="file" multiple hidden onChange={(e) => onFiles(e.currentTarget.files)} />
+        </div>
+
+        <form class="compose" onSubmit={sendDraft}>
+          <textarea
+            class="field"
+            placeholder="Type or paste a note…"
+            value={draft}
+            rows={1}
+            onInput={(e) => {
+              const t = e.currentTarget;
+              setDraft(t.value);
+              t.style.height = 'auto';
+              t.style.height = `${Math.min(t.scrollHeight + 2, 180)}px`;
+            }}
+            onKeyDown={(e) => e.key === 'Enter' && (e.metaKey || e.ctrlKey) && sendDraft(e)}
+          />
+          <button class="btn primary icon send" aria-label="Send" disabled={busy || !draft.trim()}>
+            <Icon name="send" size="sm" />
+          </button>
+        </form>
       </section>
 
-      <form class="composer" onSubmit={sendDraft}>
-        <textarea
-          placeholder="Type or paste here…"
-          value={draft}
-          rows={2}
-          onInput={(e) => setDraft(e.currentTarget.value)}
-          onKeyDown={(e) => e.key === 'Enter' && (e.metaKey || e.ctrlKey) && sendDraft(e)}
-        />
-        <button class="primary" disabled={busy || !draft.trim()}>
-          Send
-        </button>
-      </form>
-
-      <input class="search" type="search" placeholder="Search history…" value={query} onInput={(e) => setQuery(e.currentTarget.value)} />
+      <div class="search-field">
+        <Icon name="search" />
+        <input class="field" type="search" placeholder="Search everything you've copied" value={query} onInput={(e) => setQuery(e.currentTarget.value)} />
+      </div>
 
       {results ? (
         <section>
-          <h2>Results</h2>
-          {results.length === 0 && <p class="muted">Nothing matches "{query.trim()}".</p>}
-          <ul class="feed">
-            {results.map((c) => (
-              <ClipRow key={c.id} clip={c} session={session} toast={toast} onPin={togglePin} />
-            ))}
-          </ul>
+          <FeedHead title="Results" count={results.length} />
+          {results.length === 0 && <Empty icon="search" title="No matches" text={`Nothing you've copied matches "${query.trim()}".`} />}
+          <ul class="feed">{results.map(row)}</ul>
         </section>
       ) : (
         <>
           {pinned.length > 0 && (
             <section>
-              <h2>📌 Pinned</h2>
-              <ul class="feed">
-                {pinned.map((c) => (
-                  <ClipRow key={c.id} clip={c} session={session} toast={toast} onPin={togglePin} />
-                ))}
-              </ul>
+              <FeedHead title="Pinned" count={pinned.length} />
+              <ul class="feed">{pinned.map(row)}</ul>
             </section>
           )}
           <section>
-            <h2>Recent</h2>
-            {clips.length === 0 && <p class="muted">Nothing yet. Copy something on any device.</p>}
-            <ul class="feed">
-              {clips
-                .filter((c) => !c.pinned)
-                .map((c) => (
-                  <ClipRow key={c.id} clip={c} session={session} toast={toast} onPin={togglePin} />
-                ))}
-            </ul>
+            <FeedHead title="Recent" count={recent.length} />
+            {recent.length === 0 && <Empty icon="inbox" title="Nothing here yet" text="Copy something on any of your devices and it shows up here." />}
+            <ul class="feed">{recent.map(row)}</ul>
           </section>
         </>
       )}
@@ -682,9 +754,36 @@ function Main({
   );
 }
 
+function FeedHead({ title, count }: { title: string; count: number }) {
+  return (
+    <div class="feed-head">
+      <h2>{title}</h2>
+      {count > 0 && <span class="count">{count}</span>}
+    </div>
+  );
+}
+
+function Empty({ icon, title, text }: { icon: IconName; title: string; text: string }) {
+  return (
+    <div class="card empty">
+      <span class="avatar lg">
+        <Icon name={icon} />
+      </span>
+      <span class="title">{title}</span>
+      <span class="small">{text}</span>
+    </div>
+  );
+}
+
 function StatusPill({ status, searching }: { status: Status; searching?: boolean }) {
   const label = searching && status !== 'online' ? 'Looking for hub…' : { online: 'Connected', connecting: 'Connecting…', offline: 'Offline' }[status];
-  return <span class={`pill ${status}`}>{label}</span>;
+  const dot = status === 'online' ? 'dot on' : status === 'offline' && !searching ? 'dot bad' : 'dot warn pulse';
+  return (
+    <span class="status" role="status">
+      <span class={dot} />
+      {label}
+    </span>
+  );
 }
 
 function timeAgo(ts: number): string {
@@ -701,16 +800,31 @@ function formatSize(n: number): string {
   return `${(n / 1024 ** 2).toFixed(1)} MB`;
 }
 
-function ClipRow({ clip, session, toast, onPin }: { clip: Clip; session: Session; toast: (m: string) => void; onPin: (c: Clip) => void }) {
+function ClipRow({
+  clip,
+  session,
+  platform,
+  toast,
+  onPin,
+}: {
+  clip: Clip;
+  session: Session;
+  platform?: string;
+  toast: (m: string) => void;
+  onPin: (c: Clip) => void;
+}) {
   const [expanded, setExpanded] = useState(false);
   const [revealed, setRevealed] = useState(false);
+  const [copied, setCopied] = useState(false);
   const url = clip.kind === 'text' ? '' : blobUrl(session.token, clip);
   const mine = clip.sourceDeviceId === session.deviceId;
-  const to = clip.targetName ? ` → ${clip.targetDeviceId === session.deviceId ? 'you' : clip.targetName}` : '';
+  const to = clip.targetName ? (clip.targetDeviceId === session.deviceId ? 'you' : clip.targetName) : '';
 
   const copy = async () => {
     const ok = clip.kind === 'text' ? await copyText(clip.text ?? '', clip.html) : await copyImage(url);
-    toast(ok ? 'Copied' : 'Copy failed');
+    if (!ok) return toast('Copy failed');
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1600);
   };
 
   const share = async () => {
@@ -728,64 +842,104 @@ function ClipRow({ clip, session, toast, onPin }: { clip: Clip; session: Session
     }
   };
 
-  const isLink = clip.kind === 'text' && /^https?:\/\/\S+$/.test(clip.text?.trim() ?? '');
+  const text = clip.text ?? '';
+  const isLink = clip.kind === 'text' && /^https?:\/\/\S+$/.test(text.trim());
+  const long = text.length > 320 || text.split('\n').length > 5;
 
   return (
-    <li class="clip card">
-      <div class="meta">
-        <span>
-          {mine ? 'This device' : clip.sourceName}
-          {to}
+    <li class="clip card rise">
+      <div class="clip-head">
+        <span class={mine ? 'avatar sm grey' : 'avatar sm'}>
+          <Icon name={platformIcon(platform)} />
         </span>
-        <span>{timeAgo(clip.createdAt)}</span>
+        <span class="from ellipsis">
+          <b>{mine ? 'This device' : clip.sourceName}</b>
+          {to && <span> → {to}</span>}
+        </span>
+        {clip.sensitive && (
+          <span class="badge warn">
+            <Icon name="lock" /> Secret
+          </span>
+        )}
+        {isLink && (
+          <span class="badge accent">
+            <Icon name="link" /> Link
+          </span>
+        )}
+        <time>{timeAgo(clip.createdAt)}</time>
       </div>
       {clip.kind === 'text' && clip.sensitive && !revealed && (
-        <pre class="text secret" onClick={() => setRevealed(true)}>
-          🔒 •••••••• <span class="muted">Password or code · tap to show · deleted after a minute</span>
-        </pre>
+        <button class="secret" onClick={() => setRevealed(true)}>
+          <span class="dots">••••••••</span>
+          <span class="small muted grow">Password or code · tap to show · deleted after a minute</span>
+          <Icon name="eye" size="sm" />
+        </button>
       )}
       {clip.kind === 'text' && (!clip.sensitive || revealed) && (
-        <pre class={expanded ? 'text expanded' : 'text'} onClick={() => setExpanded(!expanded)}>
-          {clip.text}
+        <pre class={['text', isLink && 'link', long && 'long', expanded && 'expanded'].filter(Boolean).join(' ')} onClick={() => setExpanded(!expanded)}>
+          {text}
         </pre>
       )}
       {clip.kind === 'image' && <img class="thumb" src={url} alt={clip.name ?? 'image'} loading="lazy" />}
       {clip.kind === 'file' && (
-        <div class="file">
-          {clip.folder ? '📁' : '📄'} <span>{clip.name}</span>{' '}
-          <span class="muted">
-            {clip.folder ? 'Folder · ' : ''}
-            {formatSize(clip.size)}
+        <div class="file-tile">
+          <span class="avatar lg">
+            <Icon name={clip.folder ? 'folder' : 'file'} />
           </span>
+          <div class="grow">
+            <div class="name">{clip.name}</div>
+            <div class="muted small">
+              {clip.folder ? 'Folder · ' : ''}
+              {formatSize(clip.size)}
+            </div>
+          </div>
         </div>
       )}
-      <div class="row">
-        {(clip.kind === 'text' || (clip.kind === 'image' && canCopyImages)) && <button onClick={copy}>Copy</button>}
+      <div class="clip-actions">
+        {(clip.kind === 'text' || (clip.kind === 'image' && canCopyImages)) && (
+          <button class="btn tint sm" onClick={copy}>
+            <Icon name={copied ? 'check' : 'copy'} size="sm" />
+            {copied ? 'Copied' : 'Copy'}
+          </button>
+        )}
         {isLink &&
           (NATIVE ? (
-            <button onClick={() => void native().then((n) => n.openUrl(clip.text!.trim()))}>Open</button>
+            <button class="btn sm" onClick={() => void native().then((n) => n.openUrl(text.trim()))}>
+              <Icon name="external" size="sm" />
+              Open
+            </button>
           ) : (
-            <a class="button" href={clip.text!.trim()} target="_blank" rel="noreferrer">
+            <a class="btn sm" href={text.trim()} target="_blank" rel="noreferrer">
+              <Icon name="external" size="sm" />
               Open
             </a>
           ))}
         {clip.kind !== 'text' && !NATIVE && (
-          <a class="button" href={url} download={clip.name}>
+          <a class={clip.kind === 'file' ? 'btn tint sm' : 'btn sm'} href={url} download={clip.name}>
+            <Icon name="download" size="sm" />
             Download
           </a>
         )}
-        {clip.kind !== 'text' && (NATIVE || 'share' in navigator) && <button onClick={share}>{NATIVE ? 'Save / Share' : 'Share'}</button>}
+        {clip.kind !== 'text' && (NATIVE || 'share' in navigator) && (
+          <button class={NATIVE && clip.kind === 'file' ? 'btn tint sm' : 'btn sm'} onClick={share}>
+            <Icon name="share" size="sm" />
+            {NATIVE ? 'Save or share' : 'Share'}
+          </button>
+        )}
         {!clip.sensitive && (
-          <button class={clip.pinned ? 'pin on' : 'pin'} onClick={() => onPin(clip)} aria-label={clip.pinned ? 'Unpin' : 'Pin'} title={clip.pinned ? 'Unpin' : 'Pin'}>
-            {clip.pinned ? '📌 Unpin' : '📌 Pin'}
+          <button
+            class={clip.pinned ? 'btn ghost icon sm pin on' : 'btn ghost icon sm pin'}
+            onClick={() => onPin(clip)}
+            aria-label={clip.pinned ? 'Unpin' : 'Pin'}
+            title={clip.pinned ? 'Unpin' : 'Pin'}
+          >
+            <Icon name="pin" size="sm" />
           </button>
         )}
       </div>
     </li>
   );
 }
-
-const DEVICE_ICON: Record<string, string> = { mac: '💻', windows: '🖥️', linux: '🐧', ios: '📱', ipados: '📲', android: '🤖', web: '🌐', shortcut: '⚡' };
 
 /** Android: asks where things shared to OmniClip should go. */
 function ShareSheet({ items, devices, onSend, onCancel }: { items: SharedItem[]; devices: Device[]; onSend: (d?: Device) => void; onCancel: () => void }) {
@@ -795,18 +949,31 @@ function ShareSheet({ items, devices, onSend, onCancel }: { items: SharedItem[];
   const sorted = [...devices].sort((a, b) => Number(!!b.online) - Number(!!a.online));
   return (
     <div class="sheet-backdrop" onClick={onCancel}>
-      <div class="sheet card stack" role="dialog" aria-label="Send to" onClick={(e) => e.stopPropagation()}>
-        <h2>Send {what} to</h2>
-        <button class="primary" onClick={() => onSend()}>
+      <div class="sheet card" role="dialog" aria-label="Send to" onClick={(e) => e.stopPropagation()}>
+        <div class="grabber" />
+        <h2>Send {what}</h2>
+        <p class="sub">Choose where it goes.</p>
+        <button class="btn primary lg all" onClick={() => onSend()}>
+          <Icon name="devices" />
           All devices
         </button>
-        {sorted.map((d) => (
-          <button key={d.id} onClick={() => onSend(d)}>
-            {DEVICE_ICON[d.platform] ?? '•'} {d.name}
-            {!d.online && <span class="muted">&nbsp;(offline)</span>}
-          </button>
-        ))}
-        <button class="cancel" onClick={onCancel}>
+        {sorted.length > 0 && (
+          <div class="group">
+            {sorted.map((d) => (
+              <button key={d.id} class="item" onClick={() => onSend(d)}>
+                <span class="avatar">
+                  <Icon name={platformIcon(d.platform)} />
+                </span>
+                <span class="grow">
+                  <div class="label">{d.name}</div>
+                  <div class="hint">{d.online ? 'Online' : 'Offline · gets it when it reconnects'}</div>
+                </span>
+                <Icon name="chevron" size="sm" />
+              </button>
+            ))}
+          </div>
+        )}
+        <button class="btn ghost lg cancel" onClick={onCancel}>
           Cancel
         </button>
       </div>
@@ -815,25 +982,32 @@ function ShareSheet({ items, devices, onSend, onCancel }: { items: SharedItem[];
 }
 
 function DeviceList({ devices, me }: { devices: Device[]; me: string }) {
-  const icon = DEVICE_ICON;
+  const sorted = [...devices].sort((a, b) => Number(b.id === me) - Number(a.id === me) || Number(!!b.online) - Number(!!a.online));
   return (
-    <details class="devices">
-      <summary>
-        Devices · {devices.filter((d) => d.online).length} online of {devices.length}
-      </summary>
-      <ul>
-        {devices.map((d) => (
-          <li key={d.id}>
-            <span>
-              {icon[d.platform] ?? '•'} {d.name}
-              {d.id === me && ' (this device)'}
+    <section>
+      <div class="feed-head">
+        <h2>Devices</h2>
+        <span class="count">
+          {devices.filter((d) => d.online).length} of {devices.length} online
+        </span>
+      </div>
+      <div class="group devices">
+        {sorted.map((d) => (
+          <div key={d.id} class="item">
+            <span class={d.online ? 'avatar' : 'avatar grey'}>
+              <Icon name={platformIcon(d.platform)} />
             </span>
-            <span class={d.online ? 'dot on' : 'dot'} />
-          </li>
+            <span class="grow ellipsis name">{d.name}</span>
+            {d.id === me && <span class="badge accent">This device</span>}
+            <span class="state">
+              <span class={d.online ? 'dot on' : 'dot'} />
+              {d.online ? 'Online' : 'Offline'}
+            </span>
+          </div>
         ))}
-      </ul>
-      <p class="muted small">You can remove a device from the OmniClip menu on the hub computer.</p>
-    </details>
+      </div>
+      <p class="muted small note">To remove a device, open Settings → Devices on the hub computer.</p>
+    </section>
   );
 }
 
@@ -849,27 +1023,39 @@ function NativeSettings({ session, onUnpair }: { session: Session; onUnpair: () 
     }
   };
   return (
-    <section class="card stack settings">
-      <label class="switch">
-        <input type="checkbox" checked={auto} onChange={(e) => toggle(e.currentTarget.checked)} />
-        <span>Send my clipboard when I open OmniClip</span>
-      </label>
-      {ios && (
-        <p class="muted small">
-          To stop iOS asking every time, go to <b>Settings → Apps → OmniClip → Paste from Other Apps</b> and choose <b>Allow</b>.
-        </p>
-      )}
-      <p class="muted small">
-        Connected to {session.hub ? new URL(session.hub).hostname : 'hub'} as <b>{session.name}</b>.
-      </p>
-      <button
-        onClick={() => {
-          saveSession(null);
-          onUnpair();
-        }}
-      >
-        Unpair this device
-      </button>
+    <section class="settings">
+      <div class="section-title">Settings</div>
+      <div class="group">
+        <label class="item">
+          <span class="grow">
+            <div class="label">Send my clipboard when I open OmniClip</div>
+            {ios && (
+              <div class="hint">
+                To stop iOS asking every time, go to <b>Settings → Apps → OmniClip → Paste from Other Apps</b> and choose <b>Allow</b>.
+              </div>
+            )}
+          </span>
+          <input class="switch" type="checkbox" checked={auto} onChange={(e) => toggle(e.currentTarget.checked)} />
+        </label>
+        <div class="item">
+          <span class="avatar grey">
+            <Icon name="wifi" />
+          </span>
+          <span class="grow">
+            <div class="label">{session.name}</div>
+            <div class="hint">Connected to {session.hub ? new URL(session.hub).hostname : 'your hub'}</div>
+          </span>
+          <button
+            class="btn danger sm"
+            onClick={() => {
+              saveSession(null);
+              onUnpair();
+            }}
+          >
+            Unpair
+          </button>
+        </div>
+      </div>
     </section>
   );
 }
