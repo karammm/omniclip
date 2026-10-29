@@ -1,6 +1,6 @@
 {
   "name": "@omniclip/web",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "license": "MIT",
   "private": true,
   "type": "module",
@@ -17,8 +17,8 @@
     "@capacitor/core": "^8.5.3",
     "@capacitor/filesystem": "^8.1.5",
     "@capacitor/share": "^8.0.3",
-    "@omniclip/protocol": "0.7.0",
-    "@omniclip/ui": "0.7.0",
+    "@omniclip/protocol": "0.8.0",
+    "@omniclip/ui": "0.8.0",
     "preact": "^10.29.8"
   },
   "devDependencies": {

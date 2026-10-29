@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import type { Clip, Device } from '@omniclip/protocol';
+import type { Clip, Device, PairResponse } from '@omniclip/protocol';
 import {
   ApiError,
-  blobUrl,
   defaultDeviceName,
   detectPlatform,
   fetchCaPem,
   hostOf,
   hubUrls,
+  deleteSnippet,
+  loadBlob,
   loadSession,
   NATIVE,
   pair,
@@ -15,23 +16,31 @@ import {
   pinOf,
   probeHub,
   saveSession,
+  saveSnippet,
   searchClips,
   sendFile,
   sendText,
   setPinned,
   setHubBase,
+  type PlainSnippet,
   type Session,
 } from './api';
 import { canCopyImages, canReadClipboard, copyImage, copyText, readClipboard, secure } from './clipboard';
 import { findHub } from './discovery';
 import { Icon } from './Icon';
 import { platformIcon, type IconName } from '@omniclip/ui';
+import { expandSnippet, matchSnippets, normalizeKeyword } from '@omniclip/protocol';
 import { Setup } from './Setup';
 import { useHub, type Status } from './useHub';
 import type { SharedItem } from './native';
 
 // inline MODE check so the browser build drops the native chunk entirely
 const native = () => (import.meta.env.MODE === 'native' ? import('./native') : Promise.reject(new Error('native only')));
+
+/** The end-to-end keyring, tunnel key and relay a v0.8 hub hands out when pairing. */
+function e2eFrom(res: PairResponse): Pick<Session, 'keys' | 'tunnelKey' | 'relay'> {
+  return { ...(res.keys ? { keys: res.keys } : {}), ...(res.tunnelKey ? { tunnelKey: res.tunnelKey } : {}), ...(res.relay ? { relay: res.relay } : {}) };
+}
 
 function pairCodeFromHash(): string | null {
   const m = location.hash.match(/pair=(\d{4,16})/);
@@ -97,6 +106,7 @@ export function App() {
   const signOut = () => {
     saveSession(null);
     setSession(null);
+    if (NATIVE) void native().then((n) => n.saveExtensionSession(null)).catch(() => {});
   };
 
   const updateSession = (s: Session) => {
@@ -176,7 +186,7 @@ function PairScreen({ onPaired }: { onPaired: (s: Session) => void }) {
     setError('');
     try {
       const res = await pair(code.trim(), name.trim() || defaultDeviceName(platform), platform);
-      const s: Session = { token: res.token, deviceId: res.deviceId, networkId: res.networkId, name };
+      const s: Session = { token: res.token, deviceId: res.deviceId, networkId: res.networkId, name, ...e2eFrom(res) };
       saveSession(s);
       history.replaceState(null, '', '/');
       onPaired(s);
@@ -247,7 +257,7 @@ function NativePairScreen({ onPaired }: { onPaired: (s: Session) => void }) {
       setHubBase(target.hub);
       const deviceName = name.trim() || defaultDeviceName(platform);
       const res = await pair((target.code ?? pairCode).trim(), deviceName, platform);
-      const s: Session = { token: res.token, deviceId: res.deviceId, networkId: res.networkId, name: deviceName, hub: target.hub, caPem };
+      const s: Session = { token: res.token, deviceId: res.deviceId, networkId: res.networkId, name: deviceName, hub: target.hub, caPem, ...e2eFrom(res) };
       saveSession(s);
       onPaired(s);
     } catch (err) {
@@ -389,14 +399,23 @@ function Main({
   onSession: (s: Session) => void;
   toast: (m: string) => void;
 }) {
-  const { status, clips, pinned, devices } = useHub(session.token, onRevoked, session.hub);
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+  const { status, via, clips, pinned, devices, snippets } = useHub(session.token, onRevoked, session.hub, (u) => {
+    const s = sessionRef.current;
+    const next: Session = { ...s, ...(u.keys ? { keys: u.keys } : {}), ...(u.tunnelKey ? { tunnelKey: u.tunnelKey } : {}) };
+    if (u.relay === null) delete next.relay;
+    else if (u.relay) next.relay = u.relay;
+    if (JSON.stringify(next) !== JSON.stringify(s)) onSession(next);
+  }, { networkId: session.networkId, deviceId: session.deviceId, tunnelKey: session.tunnelKey, relay: session.relay, keys: session.keys });
   const [query, setQuery] = useState('');
+  const [view, setView] = useState<'clips' | 'snippets'>('clips');
   const [results, setResults] = useState<Clip[] | null>(null);
 
   // search runs on the hub so it covers the whole history, not just what this device has loaded
   useEffect(() => {
     const q = query.trim();
-    if (!q) return setResults(null);
+    if (!q || view !== 'clips') return setResults(null);
     let cancelled = false;
     const timer = window.setTimeout(() => {
       searchClips(session.token, q)
@@ -407,7 +426,7 @@ function Main({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [query, session.token]);
+  }, [query, session.token, view]);
 
   const togglePin = (clip: Clip) =>
     setPinned(session.token, clip.id, !clip.pinned)
@@ -417,9 +436,6 @@ function Main({
       })
       .catch((err) => toast(err instanceof Error ? err.message : 'Could not pin'));
   const [searching, setSearching] = useState(false);
-  const sessionRef = useRef(session);
-  sessionRef.current = session;
-
   // Native app: remember where the desktops are, so the hub can be found again after a failover
   useEffect(() => {
     if (!NATIVE) return;
@@ -455,6 +471,34 @@ function Main({
     };
   }, [status, session.hub]);
   const [draft, setDraft] = useState('');
+  const composer = useRef<HTMLTextAreaElement>(null);
+  /** The snippet being edited in the sheet ('new' for a new one). */
+  const [editing, setEditing] = useState<PlainSnippet | 'new' | null>(null);
+  const setDraftText = (text: string) => {
+    setDraft(text);
+    const t = composer.current;
+    if (!t) return;
+    requestAnimationFrame(() => {
+      t.style.height = 'auto';
+      t.style.height = `${Math.min(t.scrollHeight + 2, 180)}px`;
+      t.focus();
+    });
+  };
+  /** "Edit" on a clip: put it in the note box to change before sending. */
+  const editClip = (text: string) => {
+    setDraftText(text);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  const pasteIntoDraft = async () => {
+    const content = await readClipboard().catch(() => null);
+    if (content?.kind === 'text') setDraftText(content.text);
+    else toast(content ? 'That is an image; use Paste & Send' : 'Your clipboard is empty');
+  };
+  const copySnippet = async (sn: PlainSnippet) => {
+    const clip = sn.text.includes('{clipboard}') ? await readClipboard().catch(() => null) : null;
+    const ok = await copyText(expandSnippet(sn.text, clip?.kind === 'text' ? clip.text : ''));
+    toast(ok ? `Copied ${sn.name || 'snippet'}` : 'Copy failed');
+  };
   const [busy, setBusy] = useState(false);
   // '' sends to every device; otherwise a device id
   const [target, setTarget] = useState('');
@@ -587,6 +631,37 @@ function Main({
     }
   };
 
+  // iPhone app: keep the share extension able to send by itself (hub, token, CA, keys, devices)
+  useEffect(() => {
+    if (!NATIVE || !session.hub || !session.caPem) return;
+    void native().then((n) =>
+      n.saveExtensionSession({
+        hub: session.hub!,
+        token: session.token,
+        caPem: session.caPem!,
+        deviceId: session.deviceId,
+        keys: session.keys,
+        devices: devices.map((d) => ({ id: d.id, name: d.name, platform: d.platform, online: d.online })),
+      }),
+    ).catch(() => {});
+  }, [session.hub, session.token, session.caPem, session.keys, devices]);
+
+  // iPhone widget and Control Center button: omniclip://send-clipboard
+  useEffect(() => {
+    if (!NATIVE) return;
+    let off = () => {};
+    let cancelled = false;
+    void native().then(async (n) => {
+      const dispose = await n.onSendClipboardLink(() => void sendClipboardFromTile(n));
+      if (cancelled) dispose();
+      else off = dispose;
+    });
+    return () => {
+      cancelled = true;
+      off();
+    };
+  }, [session.token]);
+
   // Android app: items shared to OmniClip from other apps, and tile / widget taps
   useEffect(() => {
     if (!NATIVE) return;
@@ -633,18 +708,40 @@ function Main({
   }, []);
 
   const platformOf = (id: string) => devices.find((d) => d.id === id)?.platform;
-  const row = (c: Clip) => <ClipRow key={c.id} clip={c} session={session} platform={platformOf(c.sourceDeviceId)} toast={toast} onPin={togglePin} />;
+  const row = (c: Clip) => (
+    <ClipRow key={c.id} clip={c} session={session} platform={platformOf(c.sourceDeviceId)} toast={toast} onPin={togglePin} onEdit={editClip} />
+  );
   const recent = clips.filter((c) => !c.pinned);
+  const byName = [...snippets].sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''));
+  const shownSnippets = query.trim() ? matchSnippets(byName, query) : byName;
 
   return (
     <main class="app">
+      {editing && (
+        <SnippetSheet
+          snippet={editing === 'new' ? null : editing}
+          taken={snippets}
+          onClose={() => setEditing(null)}
+          onSave={async (payload) => {
+            await saveSnippet(session.token, editing === 'new' ? crypto.randomUUID() : editing.id, payload);
+            setEditing(null);
+            toast(editing === 'new' ? 'Snippet added' : 'Snippet saved');
+          }}
+          onDelete={async () => {
+            if (editing === 'new') return;
+            await deleteSnippet(session.token, editing.id);
+            setEditing(null);
+            toast('Snippet deleted');
+          }}
+        />
+      )}
       {incoming.length > 0 && <ShareSheet items={incoming} devices={others} onSend={(d) => sendShared(incoming, d)} onCancel={() => setIncoming([])} />}
       <header class="topbar">
         <div class="brand">
           <img class="logo" src="/icons/icon-192.png" alt="" width={30} height={30} />
           OmniClip
         </div>
-        <StatusPill status={status} searching={searching} />
+        <StatusPill status={status} searching={searching} via={via} />
         <span class="spacer" />
         {NATIVE ? (
           <button class={settingsOpen ? 'btn ghost icon on' : 'btn ghost icon'} aria-label="Settings" aria-expanded={settingsOpen} onClick={() => setSettingsOpen(!settingsOpen)}>
@@ -704,6 +801,7 @@ function Main({
 
         <form class="compose" onSubmit={sendDraft}>
           <textarea
+            ref={composer}
             class="field"
             placeholder="Type or paste a note…"
             value={draft}
@@ -716,18 +814,89 @@ function Main({
             }}
             onKeyDown={(e) => e.key === 'Enter' && (e.metaKey || e.ctrlKey) && sendDraft(e)}
           />
-          <button class="btn primary icon send" aria-label="Send" disabled={busy || !draft.trim()}>
-            <Icon name="send" size="sm" />
-          </button>
+          {!draft && canReadClipboard ? (
+            <button type="button" class="btn tint icon send" aria-label="Paste here to edit" title="Paste here to edit" onClick={pasteIntoDraft}>
+              <Icon name="clipboard" size="sm" />
+            </button>
+          ) : (
+            <button class="btn primary icon send" aria-label="Send" disabled={busy || !draft.trim()}>
+              <Icon name="send" size="sm" />
+            </button>
+          )}
         </form>
       </section>
 
-      <div class="search-field">
-        <Icon name="search" />
-        <input class="field" type="search" placeholder="Search everything you've copied" value={query} onInput={(e) => setQuery(e.currentTarget.value)} />
+      <div class="segmented" role="tablist">
+        <button role="tab" aria-selected={view === 'clips'} class={view === 'clips' ? 'active' : ''} onClick={() => setView('clips')}>
+          <Icon name="clock" size="sm" />
+          Clips
+        </button>
+        <button role="tab" aria-selected={view === 'snippets'} class={view === 'snippets' ? 'active' : ''} onClick={() => setView('snippets')}>
+          <Icon name="zap" size="sm" />
+          Snippets
+          {snippets.length > 0 && <span class="count">{snippets.length}</span>}
+        </button>
       </div>
 
-      {results ? (
+      <div class="search-field">
+        <Icon name="search" />
+        <input
+          class="field"
+          type="search"
+          placeholder={view === 'clips' ? "Search everything you've copied" : 'Search snippets, or ;keyword'}
+          value={query}
+          onInput={(e) => setQuery(e.currentTarget.value)}
+        />
+      </div>
+
+      {view === 'snippets' ? (
+        <section>
+          <div class="feed-head">
+            <h2>{query.trim() ? 'Matches' : 'Snippets'}</h2>
+            <span class="count">{shownSnippets.length || ''}</span>
+            <span class="spacer" />
+            <button class="btn tint sm" onClick={() => setEditing('new')}>
+              <Icon name="plus" size="sm" />
+              New snippet
+            </button>
+          </div>
+          {shownSnippets.length === 0 &&
+            (query.trim() ? (
+              <Empty icon="search" title="No matches" text={`No snippet matches "${query.trim()}".`} />
+            ) : (
+              <Empty icon="zap" title="No snippets yet" text="Save addresses, replies and links you paste again and again. They show up on all your devices." />
+            ))}
+          <ul class="feed">
+            {shownSnippets.map((sn) => (
+              <li key={sn.id} class="clip card snippet rise">
+                <div class="clip-head">
+                  <span class="avatar sm">
+                    <Icon name="zap" />
+                  </span>
+                  <span class="from ellipsis">
+                    <b>{sn.name || 'Snippet'}</b>
+                  </span>
+                  {sn.keyword && <span class="badge accent kw">;{normalizeKeyword(sn.keyword)}</span>}
+                </div>
+                <pre class="text snippet-text">{sn.text}</pre>
+                <div class="clip-actions">
+                  <button class="btn tint sm" onClick={() => void copySnippet(sn)}>
+                    <Icon name="copy" size="sm" />
+                    Copy
+                  </button>
+                  <button class="btn sm" onClick={() => editClip(expandSnippet(sn.text, ''))}>
+                    <Icon name="send" size="sm" />
+                    Send
+                  </button>
+                  <button class="btn ghost icon sm pin" aria-label={`Edit ${sn.name || 'snippet'}`} onClick={() => setEditing(sn)}>
+                    <Icon name="pencil" size="sm" />
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : results ? (
         <section>
           <FeedHead title="Results" count={results.length} />
           {results.length === 0 && <Empty icon="search" title="No matches" text={`Nothing you've copied matches "${query.trim()}".`} />}
@@ -775,8 +944,9 @@ function Empty({ icon, title, text }: { icon: IconName; title: string; text: str
   );
 }
 
-function StatusPill({ status, searching }: { status: Status; searching?: boolean }) {
-  const label = searching && status !== 'online' ? 'Looking for hub…' : { online: 'Connected', connecting: 'Connecting…', offline: 'Offline' }[status];
+function StatusPill({ status, searching, via }: { status: Status; searching?: boolean; via?: 'lan' | 'relay' }) {
+  const label =
+    searching && status !== 'online' ? 'Looking for hub…' : status === 'online' && via === 'relay' ? 'Connected via relay' : { online: 'Connected', connecting: 'Connecting…', offline: 'Offline' }[status];
   const dot = status === 'online' ? 'dot on' : status === 'offline' && !searching ? 'dot bad' : 'dot warn pulse';
   return (
     <span class="status" role="status">
@@ -806,22 +976,48 @@ function ClipRow({
   platform,
   toast,
   onPin,
+  onEdit,
 }: {
   clip: Clip;
   session: Session;
   platform?: string;
   toast: (m: string) => void;
   onPin: (c: Clip) => void;
+  /** Puts the clip's text in the note box to change before sending. */
+  onEdit: (text: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [revealed, setRevealed] = useState(false);
   const [copied, setCopied] = useState(false);
-  const url = clip.kind === 'text' ? '' : blobUrl(session.token, clip);
+  // images and files are downloaded and decrypted on this device, then shown from a local URL
+  const [url, setUrl] = useState('');
+  const loading = useRef<Promise<string>>();
+  const getUrl = () =>
+    (loading.current ??= loadBlob(session.token, clip).then((blob) => {
+      const u = URL.createObjectURL(blob);
+      setUrl(u);
+      return u;
+    }));
+  useEffect(() => {
+    if (clip.kind === 'image') getUrl().catch(() => (loading.current = undefined));
+  }, [clip.id]);
+  useEffect(() => () => void (url && URL.revokeObjectURL(url)), [url]);
+  const download = async () => {
+    try {
+      const a = document.createElement('a');
+      a.href = await getUrl();
+      a.download = clip.name ?? 'file';
+      a.click();
+    } catch (err) {
+      loading.current = undefined;
+      toast(err instanceof Error ? err.message : 'Download failed');
+    }
+  };
   const mine = clip.sourceDeviceId === session.deviceId;
   const to = clip.targetName ? (clip.targetDeviceId === session.deviceId ? 'you' : clip.targetName) : '';
 
   const copy = async () => {
-    const ok = clip.kind === 'text' ? await copyText(clip.text ?? '', clip.html) : await copyImage(url);
+    const ok = clip.kind === 'text' ? await copyText(clip.text ?? '', clip.html) : await copyImage(await getUrl());
     if (!ok) return toast('Copy failed');
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1600);
@@ -829,14 +1025,15 @@ function ClipRow({
 
   const share = async () => {
     if (NATIVE) {
-      await (await native()).shareFile(url, clip.name ?? 'file').catch(() => {});
+      await (await native()).shareFile(await getUrl(), clip.name ?? 'file').catch(() => {});
       return;
     }
     try {
-      const blob = await (await fetch(url)).blob();
+      const u = await getUrl();
+      const blob = await (await fetch(u)).blob();
       const file = new File([blob], clip.name ?? 'file', { type: clip.mime });
       if (navigator.canShare?.({ files: [file] })) await navigator.share({ files: [file] });
-      else window.open(url, '_blank');
+      else window.open(u, '_blank');
     } catch {
       // user cancelled the share sheet
     }
@@ -880,7 +1077,7 @@ function ClipRow({
           {text}
         </pre>
       )}
-      {clip.kind === 'image' && <img class="thumb" src={url} alt={clip.name ?? 'image'} loading="lazy" />}
+      {clip.kind === 'image' && (url ? <img class="thumb" src={url} alt={clip.name ?? 'image'} /> : <div class="thumb placeholder" />)}
       {clip.kind === 'file' && (
         <div class="file-tile">
           <span class="avatar lg">
@@ -915,15 +1112,20 @@ function ClipRow({
             </a>
           ))}
         {clip.kind !== 'text' && !NATIVE && (
-          <a class={clip.kind === 'file' ? 'btn tint sm' : 'btn sm'} href={url} download={clip.name}>
+          <button class={clip.kind === 'file' ? 'btn tint sm' : 'btn sm'} onClick={download}>
             <Icon name="download" size="sm" />
             Download
-          </a>
+          </button>
         )}
         {clip.kind !== 'text' && (NATIVE || 'share' in navigator) && (
           <button class={NATIVE && clip.kind === 'file' ? 'btn tint sm' : 'btn sm'} onClick={share}>
             <Icon name="share" size="sm" />
             {NATIVE ? 'Save or share' : 'Share'}
+          </button>
+        )}
+        {clip.kind === 'text' && !clip.sensitive && (
+          <button class="btn ghost icon sm edit" onClick={() => onEdit(text)} aria-label="Edit and send" title="Edit and send">
+            <Icon name="pencil" size="sm" />
           </button>
         )}
         {!clip.sensitive && (
@@ -938,6 +1140,87 @@ function ClipRow({
         )}
       </div>
     </li>
+  );
+}
+
+/** Adds or edits a snippet. */
+function SnippetSheet({
+  snippet,
+  taken,
+  onSave,
+  onDelete,
+  onClose,
+}: {
+  snippet: PlainSnippet | null;
+  taken: PlainSnippet[];
+  onSave: (s: { name: string; keyword?: string; text: string }) => Promise<void>;
+  onDelete: () => Promise<void>;
+  onClose: () => void;
+}) {
+  const [name, setName] = useState(snippet?.name ?? '');
+  const [keyword, setKeyword] = useState(snippet?.keyword ?? '');
+  const [text, setText] = useState(snippet?.text ?? '');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const run = async (fn: () => Promise<void>) => {
+    setBusy(true);
+    setError('');
+    try {
+      await fn();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Something went wrong');
+    } finally {
+      setBusy(false);
+    }
+  };
+  const save = (e: Event) => {
+    e.preventDefault();
+    const k = normalizeKeyword(keyword);
+    const clash = taken.find((s) => k && normalizeKeyword(s.keyword) === k && s.id !== snippet?.id);
+    if (clash) return setError(`;${k} is already used by "${clash.name || 'another snippet'}".`);
+    void run(() => onSave({ name: name.trim(), ...(k ? { keyword: k } : {}), text }));
+  };
+  return (
+    <div class="sheet-backdrop" onClick={onClose}>
+      <form class="sheet card form-sheet" role="dialog" aria-label={snippet ? 'Edit snippet' : 'New snippet'} onClick={(e) => e.stopPropagation()} onSubmit={save}>
+        <div class="grabber" />
+        <h2>{snippet ? 'Edit snippet' : 'New snippet'}</h2>
+        <p class="sub">Snippets are end-to-end encrypted and show up on all your devices.</p>
+        <div class="pair">
+          <label>
+            Name
+            <input class="field" value={name} maxLength={100} placeholder="Home address" onInput={(e) => setName(e.currentTarget.value)} />
+          </label>
+          <label>
+            Keyword
+            <input class="field kw" value={keyword} maxLength={40} placeholder="addr" autoCapitalize="off" autoCorrect="off" onInput={(e) => setKeyword(e.currentTarget.value)} />
+          </label>
+        </div>
+        <label>
+          Text
+          <textarea class="field" rows={5} value={text} required onInput={(e) => setText(e.currentTarget.value)} />
+        </label>
+        <p class="hint">
+          <code>{'{date}'}</code> <code>{'{time}'}</code> <code>{'{clipboard}'}</code> are filled in when you copy it.
+        </p>
+        {error && <ErrorNote text={error} />}
+        <div class="sheet-actions">
+          {snippet && (
+            <button type="button" class="btn ghost danger" disabled={busy} onClick={() => void run(onDelete)}>
+              <Icon name="trash" size="sm" />
+              Delete
+            </button>
+          )}
+          <span class="spacer" />
+          <button type="button" class="btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button class="btn primary" disabled={busy || !text.trim()}>
+            Save
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }
 

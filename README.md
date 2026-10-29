@@ -14,7 +14,7 @@ Drop a file on the Mac and pick it up on the iPad. No cloud, no account, no app 
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178c6?logo=typescript&logoColor=white)
 ![Electron](https://img.shields.io/badge/Electron-45-47848f?logo=electron&logoColor=white)
 ![Local only](https://img.shields.io/badge/data-stays%20on%20your%20LAN-16a34a)
-![Status](https://img.shields.io/badge/status-v0.7-blueviolet)
+![Status](https://img.shields.io/badge/status-v0.8-blueviolet)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 <img src="docs/demo.gif" alt="OmniClip demo: text and an image copied on one device appear instantly on two phones" width="720">
@@ -41,6 +41,7 @@ Drop a file on the Mac and pick it up on the iPad. No cloud, no account, no app 
 - [Install](#install)
 - [Quick start](#quick-start)
 - [Everyday use](#everyday-use)
+- [Away from home (internet relay)](#away-from-home-internet-relay)
 - [How it works](#how-it-works)
 - [Security and privacy](#security-and-privacy)
 - [HTTP API](#http-api)
@@ -58,7 +59,7 @@ Drop a file on the Mac and pick it up on the iPad. No cloud, no account, no app 
 
 Apple's Universal Clipboard only works between Apple devices. Windows' clipboard sync only works with a Microsoft account and Android. Cloud clipboard apps send everything you copy, including passwords and private messages, to someone else's server.
 
-OmniClip connects **all** of your devices instead, and keeps your data **at home**. One of your computers acts as a small local server (the *hub*). Every other device talks to it directly over your Wi-Fi. Nothing ever leaves your network.
+OmniClip connects **all** of your devices instead, and keeps your data **at home**. One of your computers acts as a small local server (the *hub*). Every other device talks to it directly over your Wi-Fi. Clips are end-to-end encrypted on the device that sends them. Nothing leaves your network, unless you set up your own relay for when you're away, and even then only encrypted data does.
 
 ## Features
 
@@ -81,10 +82,15 @@ OmniClip connects **all** of your devices instead, and keeps your data **at home
 | ⚙️ **Settings window** | Rename the computer, set sync rules, manage devices, choose where files are saved, and search your history. |
 | ⬆️ **Automatic updates** | Windows and the Linux AppImage install updates in the background. Mac tells you when a new version is out. |
 | 🕘 **History** | Your last 200 clips, plus any you've pinned. Click any of them to copy it again. |
-| 📤 **Share sheet integration** | Android: **Share → OmniClip** from any app, to all devices or one. iOS: a one-tap Shortcut, including Back Tap. |
+| 📤 **Share sheet integration** | **Share → OmniClip** from any app on Android and iPhone, to all devices or one. iOS can also use a one-tap Shortcut, including Back Tap. |
 | 🧭 **Zero configuration** | Computers find each other automatically over mDNS (Bonjour). |
 | 🛟 **Automatic failover** | If the hub computer shuts down, another desktop takes over within about 10 seconds, and phones find it on their own. |
-| 🔐 **Private by design** | Pairing codes, a token per device, encryption with a certificate pinned from the QR code, and per-device revocation. |
+| 🔐 **End-to-end encrypted** | Clips, files and snippets are encrypted on the device that sends them. The hub stores and forwards only ciphertext, and removing a device rotates the key. |
+| 🌍 **Away from home** | An optional internet relay you run on Cloudflare's free plan keeps your devices in sync on any network. It only ever sees encrypted data. |
+| ⚡ **Snippets** | Save text you paste often. Type `;` and a keyword in the quick-paste picker, or tap it on your phone. `{date}`, `{time}` and `{clipboard}` are filled in for you. |
+| ✏️ **Edit before sending** | Change a clip (or what you just copied) before sending it on, from your phone or a computer's History. |
+| 🍏 **iPhone share sheet and widget** | **Share → OmniClip** from any app, to all devices or one. A home-screen widget and an iOS 18 Control Center button send what you copied. |
+| 🛡️ **Private by design** | Pairing codes, a token per device, a certificate pinned from the QR code, and per-device revocation. |
 
 ## Supported devices
 
@@ -94,11 +100,11 @@ OmniClip connects **all** of your devices instead, and keeps your data **at home
 | **Windows** 10/11 | System-tray app | Automatic: just copy | Automatic: just paste |
 | **Linux** (Ubuntu 22.04+, Fedora, …) | Tray app (AppImage or `.deb`) | Automatic: just copy | Automatic: just paste |
 | **Android** 8+ | OmniClip app (`.apk`) | Opening the app, the Quick Settings tile or the widget sends your clipboard, or **Share → OmniClip** | Tap **Copy** |
-| **iPhone / iPad** | OmniClip app (`.ipa` / Xcode) | **Paste & Send**, or a one-tap Shortcut | Tap **Copy** |
+| **iPhone / iPad** | OmniClip app (`.ipa` / Xcode) | **Paste & Send**, **Share → OmniClip**, the widget or Control Center button, or a one-tap Shortcut | Tap **Copy** |
 | Anything with a browser | Web app served by the hub | **Paste & Send**, or paste into the text box | Tap **Copy** |
 
 > [!NOTE]
-> All devices must be on the **same Wi-Fi or LAN**. Guest networks that isolate clients from each other block local connections.
+> Devices sync over the **same Wi-Fi or LAN**. Guest networks that isolate clients from each other block local connections. To keep syncing away from home, set up the optional [internet relay](#away-from-home-internet-relay).
 
 ## Install
 
@@ -164,6 +170,8 @@ Apple only allows apps from the App Store unless you sign them yourself. That's 
 - **Xcode (on a Mac).** Run `npm run ios -w @omniclip/mobile` from a clone of this repo. In Xcode, choose your iPhone, set **Signing & Capabilities → Team** to your Apple ID, and press **Run**.
 
 Apps signed with a free Apple ID stop opening after 7 days. Reinstall, or refresh in Sideloadly or AltStore, to keep using it. A paid Apple Developer account removes this limit.
+
+The app comes with a share extension and a widget. A free Apple ID can register 10 app IDs a week, and OmniClip uses 3 of them (the app and its two extensions). The share extension and the app share data through the App Group `group.com.omniclip.app`; if your signing tool asks, keep App Groups on. The widget needs iOS 16 or later.
 
 You can also skip the app and use the [web app](#web-app-no-install) in Safari.
 </details>
@@ -233,6 +241,10 @@ Files and folders received from other devices are saved to `~/Downloads/OmniClip
 > [!NOTE]
 > On a Mac, pasting for you needs permission: the first time, macOS asks you to allow OmniClip under **System Settings → Privacy & Security → Accessibility**. Until then the clip is copied and you press ⌘V. Because the app isn't signed yet, macOS may ask again after an update.
 
+**Snippets.** Save text you paste often (an address, a signature, a meeting link) in **Settings → Snippets**, with an optional keyword. In the quick-paste picker, type `;` to list your snippets, or `;addr` to jump to one; matching snippets also show up first when you search. Choose one and it's pasted. `{date}`, `{time}` and `{clipboard}` (what you last copied) are filled in when you paste. Snippets sync to every device, end-to-end encrypted, and you can copy them on your phone too.
+
+**Edit & send.** In **Settings → History**, the pencil on a text clip opens it in an editor: change it, then send it as a new clip to every device or just one, or save it as a snippet.
+
 **Passwords and codes.** When you copy something that looks like a password, a one-time code or a card number (or anything a password manager marks as secret), OmniClip sends it as usual but never writes it to history, hides it on screen, and deletes it everywhere after one minute. Other computers clear it from their clipboard then too, if it's still there. In **Settings → General → Passwords and codes** you can choose **Never send** instead, or turn the guard off.
 
 **Sync rules.** In **Settings → Rules** each computer chooses:
@@ -241,21 +253,24 @@ Files and folders received from other devices are saved to `~/Downloads/OmniClip
 - **What it uses from other devices:** text and images go on the clipboard, files and folders get saved. What you turn off still shows up in History, and anything sent to this computer alone always comes through.
 - **Apps to ignore:** nothing copied while one of these apps is in front is sent. Type an app's name, or click one of the suggestions (common password managers and apps you recently copied from). On Linux this needs `xdotool` and an X11 session.
 
-**Settings** (tray menu → **Settings…**, or ⌘, / Ctrl+,) has four tabs:
+**Settings** (tray menu → **Settings…**, or ⌘, / Ctrl+,) has five tabs:
 
 | Tab | What's there |
 | --- | --- |
-| **General** | This computer's name, whether its saved history is encrypted, pause, put received files on the clipboard, passwords and codes, the quick-paste shortcut, where to save received files, open at login, updates |
+| **General** | This computer's name, whether its saved history is encrypted, pause, put received files on the clipboard, passwords and codes, the quick-paste shortcut, the [internet relay](#away-from-home-internet-relay), where to save received files, open at login, updates |
 | **Rules** | What this computer sends and receives, and the apps whose copies are never sent |
+| **Snippets** | Add, edit and delete snippets and their keywords |
 | **Devices** | Every paired device, whether it's online, **Send clipboard** to that device, and **Remove**. Any computer on the network can remove phones and tablets. |
-| **History** | Search everything ever copied (text and file names), copy or save any clip again, **Send to…** one device, and pin or unpin clips |
+| **History** | Search everything ever copied (text and file names), copy or save any clip again, **Edit & send**, **Send to…** one device, and pin or unpin clips |
 
 ### On a phone or tablet
 
 - **Send to** chooses who gets what you send next: **All devices**, or one device.
 - **Paste & Send** reads your clipboard and sends it. iOS asks you to confirm with a **Paste** button. That's normal.
 - **Send photo or file** opens the picker.
-- **Type or paste here** sends text you type.
+- **Type or paste a note** sends text you type. When it's empty, the clipboard button next to it pastes what you copied so you can **edit it before sending**.
+- **✏️ Edit** on a text clip puts it in the note box, ready to change and send.
+- **Clips | Snippets** switches to your snippets: tap **Copy** to copy one (placeholders filled in), **Send** to put it in the note box, or the pencil to edit it. **New snippet** adds one.
 - **Search history** finds anything ever copied on any device, not just what's on screen.
 - **📌 Pin** keeps a clip at the top of every device's list. Pinned clips never expire.
 - **🔒 Passwords and codes** show as dots. Tap to show one. They disappear after a minute.
@@ -266,7 +281,10 @@ Files and folders received from other devices are saved to `~/Downloads/OmniClip
   - **Home-screen widget:** long-press the home screen → **Widgets** → **OmniClip**. Its **Send clipboard** button does the same; the icon opens the app.
   - **Share → OmniClip** from any app, for text, photos or several files at once. OmniClip asks whether to send to all devices or just one.
   - Copied text with formatting (for example from Chrome) keeps it when you tap **Copy** on a clip from a computer.
-- **iPhone app:** turn on automatic sending in **⚙︎ Settings** in the app. To stop iOS asking each time, go to **Settings → Apps → OmniClip → Paste from Other Apps → Allow**.
+- **iPhone app:** turn on automatic sending in **⚙︎ Settings** in the app. To stop iOS asking each time, go to **Settings → Apps → OmniClip → Paste from Other Apps → Allow**. Faster still:
+  - **Share → OmniClip** from any app, for text, links, photos and files. Pick **All devices** or one device and it's sent straight away, without opening the app. If your hub isn't reachable (you're away from home), it's kept and sent the next time you open OmniClip.
+  - **Home-screen or lock-screen widget:** long-press the home screen → **Edit** → **Add Widget** → **OmniClip**. Tapping **Send clipboard** opens OmniClip, sends what you copied and shows when it's done.
+  - **Control Center button (iOS 18):** open Control Center, tap **+** → **Add a Control** → **OmniClip → Send clipboard**. It also works on the Action button.
 
 ### iPhone one-tap Shortcut (optional)
 
@@ -283,6 +301,32 @@ iOS never lets web apps read the clipboard in the background. A Shortcut gets yo
 3. Turn on **Show in Share Sheet**, or assign it in **Settings → Accessibility → Touch → Back Tap → Double Tap**.
 
 The Shortcut works for both text and images.
+
+## Away from home (internet relay)
+
+By default OmniClip only works on your own network. An **internet relay** lets your phone and laptop keep syncing with your hub at home from anywhere: a café, the office, mobile data.
+
+The relay is a tiny [Cloudflare Worker](https://workers.cloudflare.com) that you deploy to your own free Cloudflare account. It never sees your clips. Each device talks to the hub through an end-to-end encrypted tunnel inside the relay connection, so the relay only passes along opaque, numbered frames. It can't read them, change them, replay them, or pretend to be your hub.
+
+**Set it up once (about 5 minutes):**
+
+1. Create a free account at [cloudflare.com](https://dash.cloudflare.com/sign-up).
+2. In a clone of this repo, run:
+   ```bash
+   npm install
+   npm run deploy -w @omniclip/relay
+   ```
+   Wrangler opens a browser to sign in to Cloudflare the first time, then prints the relay's address, like `https://omniclip-relay.yourname.workers.dev`.
+3. On a computer at home, open **Settings → General → Away from home**, paste that address and click **Save**. The badge turns green when the hub is connected to the relay.
+
+That's it. Every paired device picks up the relay automatically, the next time it connects at home.
+
+**How devices use it.** When a phone or computer can't reach the hub on the local network for about 8 seconds, it switches to the relay. The status shows **Connected via relay**. Every 30 seconds it checks whether the hub is reachable directly again, and switches back as soon as it is. A computer away from home that finds no hub joins through the relay instead of starting a second hub.
+
+> [!NOTE]
+> The hub computer has to be on and connected for the relay to work. Cloudflare's free plan easily covers personal use. Only devices that encrypt end to end can use the relay; the Apple Shortcut and the web app in basic mode work on your local network only. Pairing new devices is local-only too.
+
+To turn the relay off, clear the address and click **Save**.
 
 ## How it works
 
@@ -306,6 +350,10 @@ flowchart TB
 ```
 
 Every desktop runs the same app. One of them hosts the hub, and the rest connect to it as clients, exactly like the phones. The hub's own tray app also connects as a client over loopback, so every device follows the same code path.
+
+**End-to-end encryption.** Every paired device holds the network's keyring, which the hub hands out when a device pairs, over the pinned TLS connection. A device encrypts a clip's text, formatting, file name, type and contents with AES-256-GCM before sending it. Files are encrypted in 64 KB chunks, so a cut-off or reordered file fails to decrypt. The hub stores and forwards the ciphertext as it is. It only sees what it needs to route clips: kind (text, image or file), size, time, sender, the device it's addressed to, and whether it's a password (which the sender decides). Searching happens on each device, over its own decrypted history. When a device is removed, the hub adds a new key and gives it only to the remaining devices; older keys stay so earlier history can still be read. The formats live in [`packages/protocol/src/e2e.ts`](packages/protocol/src/e2e.ts), and the iPhone share extension implements the same ones with CryptoKit.
+
+**The relay tunnel.** Each device also gets its own tunnel key when it pairs on the local network. Through the relay, the device and the hub run a handshake that derives fresh keys from it (HKDF over random nonces from both sides) and prove to each other that they know it, so the relay can't stand in for either. Every frame after that is AES-GCM with a counter both sides track. Inside the tunnel run the same API requests and live connection as on the local network, so the hub serves relayed devices with exactly the same code ([`packages/protocol/src/tunnel.ts`](packages/protocol/src/tunnel.ts), [`apps/relay`](apps/relay)).
 
 ### What happens when you copy
 
@@ -352,13 +400,19 @@ stateDiagram-v2
 | Hub | [Fastify 5](https://fastify.dev), `@fastify/websocket`, `@fastify/multipart`, JSON file store, [node-forge](https://github.com/digitalbazaar/forge) for certificates, [bonjour-service](https://github.com/onlxltd/bonjour-service) for mDNS |
 | Web app | [Preact](https://preactjs.com) + [Vite](https://vite.dev), service worker, Web Share Target (about 37 KB gzipped) |
 | Desktop | [Electron 45](https://www.electronjs.org), bundled with esbuild, packaged with electron-builder |
-| Mobile | [Capacitor 8](https://capacitorjs.com) wrapping the web UI, plus a small native Android plugin (share inbox, image copy) |
+| Mobile | [Capacitor 8](https://capacitorjs.com) wrapping the web UI; native Android plugin (share inbox, tile, widget); Swift share extension, WidgetKit widget and Control Center button on iOS |
+| Relay | [Cloudflare Workers](https://workers.cloudflare.com) + a Durable Object per network (`apps/relay`), no dependencies |
+| Encryption | WebCrypto (AES-256-GCM, HKDF, HMAC) shared by every client; CryptoKit in the iPhone share extension |
 | Releases | GitHub Actions: `.dmg`, `.exe`, `.msi`, `.apk` and `.ipa` from one tag |
 | Tests | [Vitest](https://vitest.dev) plus an end-to-end script with a real TLS hub and simulated devices |
 
 ## Security and privacy
 
-- **Local only.** OmniClip has no servers, telemetry or analytics. Clips travel only between your devices.
+- **Local only.** OmniClip has no servers, telemetry or analytics. Clips travel only between your devices, plus your own relay if you set one up.
+- **End-to-end encryption.** Clips, files and snippets are encrypted on the sending device with the network's keyring, and decrypted only on paired devices. The hub keeps ciphertext on disk and only sees routing details (kind, size, time, devices, the password flag). See [How it works](#how-it-works).
+- **The hub computer is one of your devices.** It holds the keyring too, so it can serve clients that can't encrypt by themselves: the Apple Shortcut, the web app in basic mode (browsers only allow encryption on HTTPS pages), and older OmniClip versions. For those it encrypts what they send and decrypts what they read, only on your local network and never through the relay.
+- **Removing a device rotates the key.** The removed device can't connect any more and never receives the new key.
+- **The relay can't read or fake anything.** Devices reach the hub through an end-to-end encrypted, authenticated tunnel. The relay sees which network and roughly how much data, nothing else. It accepts only connections that know your network's relay token, and pairing is never possible through it.
 - **Pairing.** A device joins with a 6-digit one-time code. The code changes after every use, every 10 minutes, and after 10 wrong attempts.
 - **Per-device tokens.** Each paired device gets its own random token. The hub only stores a SHA-256 hash of it. Remove a device from **Devices** and it's disconnected immediately.
 - **Encryption.** All secure-mode traffic uses TLS. Each OmniClip network generates its own private certificate authority. Its server certificate covers the hub's LAN addresses and is valid for at most 397 days, so Apple devices accept it.
@@ -381,7 +435,7 @@ The hub has a small REST API, handy for scripts, Shortcuts, Tasker or automation
 | --- | --- | --- |
 | `GET` | `/api/info` | Hub identity and protocol version. No authentication. |
 | `GET` | `/ca.crt` | The network's CA certificate. No authentication. |
-| `POST` | `/api/pair` | `{code, name, platform}` → `{token, deviceId, networkId, caPem}` |
+| `POST` | `/api/pair` | `{code, name, platform}` → `{token, deviceId, networkId, caPem, keys, tunnelKey, relay?}` (local network only) |
 | `GET` | `/api/me` | The device the token belongs to |
 | `GET` | `/api/devices` | Paired devices and their online status |
 | `GET` | `/api/clips?limit=N` | Clip history, newest first |
@@ -392,7 +446,14 @@ The hub has a small REST API, handy for scripts, Shortcuts, Tasker or automation
 | `DELETE` | `/api/devices/:id` | Remove a device (computers can remove any device; others only themselves) |
 | `POST` | `/api/clips` | Send a clip (see the formats below). Add `?to=<deviceId>` to send to one device, and `?sensitive=1` or `?sensitive=0` to override password detection. Text can carry `html` and `rtf` formatting. |
 | `GET` | `/api/clips/:id/blob` | Download an image or file clip |
-| `GET` | `/ws` | WebSocket: `hello`, `clip:new`, `clip:update`, `clip:remove`, `devices`, `revoked` events |
+| `GET` | `/api/snippets` | Snippets |
+| `PUT` | `/api/snippets/:id` | `{name, keyword?, text}` (or `{enc}` from an encrypting client): add or change a snippet |
+| `DELETE` | `/api/snippets/:id` | Delete a snippet |
+| `GET` | `/api/relay` | The relay address and whether the hub is connected to it |
+| `PUT` | `/api/relay` | `{url}`: set the relay (computers on the local network only; `""` turns it off) |
+| `GET` | `/ws` | WebSocket: `hello`, `clip:new`, `clip:update`, `clip:remove`, `devices`, `snippets`, `keys`, `relay`, `revoked` events. Add `&e2e=1` to receive clips encrypted. |
+
+**End-to-end clients** send the header `x-omniclip-e2e: 1`. They get clips, files and snippets exactly as stored (encrypted, with an `enc` envelope), and send them encrypted: text as `{"enc": {...}, "size": N}`, files as multipart with `kind`, `size` and `enc` fields before the encrypted file. **Everything else** (scripts, Shortcuts, `curl`) keeps working as before: send plain text or files, and the hub encrypts them for you and decrypts what you read, on the local network.
 
 `POST /api/clips` accepts:
 
@@ -422,7 +483,7 @@ curl -X POST https://HUB:7878/api/clips --cacert omniclip-ca.crt \
   -H "X-Filename: report.pdf" --data-binary @report.pdf
 ```
 
-Message schemas live in [`packages/protocol/src/index.ts`](packages/protocol/src/index.ts).
+Message schemas live in [`packages/protocol/src/index.ts`](packages/protocol/src/index.ts), the encryption formats in [`e2e.ts`](packages/protocol/src/e2e.ts).
 
 ## Configuration and storage
 
@@ -441,7 +502,7 @@ Hub data, certificates and stored files live in the app's user-data folder:
 - **macOS:** `~/Library/Application Support/OmniClip`
 - **Windows:** `%APPDATA%\OmniClip`
 
-The standalone hub (`npm run dev:hub`) encrypts its history when `OMNICLIP_HISTORY_KEY` is set to 64 hex characters (`openssl rand -hex 32`).
+The standalone hub (`npm run dev:hub`) encrypts its history when `OMNICLIP_HISTORY_KEY` is set to 64 hex characters (`openssl rand -hex 32`), and connects to an internet relay when `OMNICLIP_RELAY_URL` is set (an empty value turns it off).
 
 Delete that folder to reset OmniClip completely. You'll need to pair every device again.
 
@@ -469,7 +530,9 @@ node node_modules/electron/install.js   # npm 11 blocks Electron's download scri
 | `npm run dev:hub` | Runs a standalone hub in the terminal and prints a pairing QR code (no Electron needed) |
 | `npm run build:web` | Builds the PWA into `apps/web/dist` |
 | `npm test` | Unit and integration tests (Vitest) |
-| `npm run test:e2e` | Starts a real TLS hub and three simulated devices that exchange text, images and files |
+| `npm run test:e2e` | Starts a real TLS hub and three simulated devices that exchange text, images, files and snippets, end-to-end encrypted |
+| `npm run test:relay` | Syncs a hub and "far away" devices only through a local relay (start it first with `npm run dev -w @omniclip/relay`), and checks the relay never sees anything readable |
+| `npm run deploy -w @omniclip/relay` | Deploys the internet relay to your Cloudflare account |
 | `npm run typecheck` | Type-checks every workspace |
 | `npm run icons` | Regenerates the app, tray and PWA icons |
 | `npm run dist:mac` / `dist:win` / `dist:linux` | Builds desktop installers (see below) |
@@ -486,12 +549,14 @@ node node_modules/electron/install.js   # npm 11 blocks Electron's download scri
 ```
 omniclip/
 ├── packages/
-│   └── protocol/        Shared zod schemas, types and constants
+│   ├── protocol/        Shared zod schemas, end-to-end encryption, relay tunnel, snippets
+│   └── ui/              Design tokens, controls and icons shared by every screen
 ├── apps/
 │   ├── hub/             Fastify HTTPS/WebSocket server, JSON store, local CA, mDNS
 │   ├── web/             Preact UI: the PWA and (with --mode native) the mobile apps
 │   ├── desktop/         Electron tray app: hub election and failover, clipboard watcher, pairing window
-│   └── mobile/          Capacitor Android and iOS projects, plus the share-inbox and image-copy plugin
+│   ├── mobile/          Capacitor Android and iOS projects, native plugins, iOS share extension and widget
+│   └── relay/           Cloudflare Worker: the optional internet relay
 ├── .github/workflows/   CI and the release pipeline
 ├── scripts/             Icon generator, version setter, end-to-end test
 └── docs/                README media
@@ -504,6 +569,8 @@ The test suite covers protocol validation, pairing and code rotation, auth, broa
 ```bash
 npm test && npm run test:e2e
 ```
+
+The relay test needs the relay running locally: `npm run dev -w @omniclip/relay` in one terminal, `npm run test:relay` in another.
 
 ## Releases and building installers
 
@@ -619,7 +686,8 @@ Check that **Settings → Rules → Files and folders** is on, and that the app 
 - **iOS needs a tap** to send and to copy. Apple doesn't allow background clipboard access. That's an iOS rule, not an OmniClip choice.
 - **The web app after a failover** has to be opened at the new hub's address. The phone apps and desktops move over automatically.
 - **The iPhone app** needs re-signing every 7 days with a free Apple ID, and it isn't on the App Store.
-- **Wi-Fi/LAN only.** There's no Bluetooth or internet relay yet.
+- **Away from home needs your own relay** and the hub computer switched on at home. There's no Bluetooth.
+- **The iPhone share extension** sends directly only on your home network. Away from home it keeps what you shared until you open OmniClip, which then sends it through the relay.
 - **Formatting** goes between computers and to Android. iPhones and iPads copy plain text.
 - **The Android tile and widget** briefly open OmniClip, because Android only lets the app in front read the clipboard.
 - **Automatic updates on Mac** only notify you until releases are signed with a Developer ID (see [Code signing](#code-signing)); signed Mac builds update themselves. The `.deb` and `.msi` always only notify; the AppImage and `.exe` update themselves.
@@ -641,7 +709,10 @@ Check that **Settings → Rules → Files and folders** is on, and that the app 
 - [x] Quick-paste shortcut, send to one device, password guard
 - [x] Encrypted history on the hub's disk
 - [x] Folders, formatting, sync rules, Android tile and widget
-- [ ] End-to-end encryption between devices
+- [x] End-to-end encryption between devices
+- [x] Internet relay for when you're away from home
+- [x] Snippets and editing clips before sending
+- [x] iPhone share extension, widget and Control Center button
 - [ ] Optional Bluetooth for nearby devices without Wi-Fi
 
 ## Community and support

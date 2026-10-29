@@ -7,3 +7,6 @@ release/
 
 # Capacitor
 apps/mobile/www/
+
+# Cloudflare Wrangler (relay dev server)
+.wrangler/

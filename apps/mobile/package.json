@@ -1,6 +1,6 @@
 {
   "name": "@omniclip/mobile",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "license": "MIT",
   "private": true,
   "description": "OmniClip for Android and iOS (Capacitor wrapper around apps/web)",

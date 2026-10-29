@@ -83,8 +83,19 @@ export function onResume(fn: () => void): () => void {
 
 export type SharedItem = { kind: 'text'; text: string } | { kind: 'file'; name: string; mime: string; data: string };
 
+/** What the iPhone share extension needs to send to the hub by itself. */
+export interface ExtensionSession {
+  hub: string;
+  token: string;
+  caPem: string;
+  deviceId: string;
+  keys?: unknown;
+  devices: { id: string; name: string; platform: string; online?: boolean }[];
+}
+
 interface OmniClipPlugin {
   trustCa(opts: { pem: string }): Promise<void>;
+  saveSession(opts: { session: ExtensionSession | null }): Promise<void>;
   take(): Promise<{ items: SharedItem[]; sendClipboard?: boolean }>;
   copyImage(opts: { data: string; mime: string }): Promise<void>;
   copyText(opts: { text: string; html: string }): Promise<void>;
@@ -92,8 +103,9 @@ interface OmniClipPlugin {
   addListener(event: 'shared', fn: () => void): Promise<PluginListenerHandle>;
 }
 
-// App-local plugin (OmniClipPlugin.java / OmniClipPlugin.swift). trustCa works on both platforms;
-// the share inbox, the Quick Settings tile / widget requests and the copy helpers are Android only.
+// App-local plugin (OmniClipPlugin.java / OmniClipPlugin.swift). trustCa and take work on both
+// platforms (on iOS, take returns what the share extension saved for later); saveSession is iOS only;
+// the Quick Settings tile / widget requests and the copy helpers are Android only.
 const OmniClip = registerPlugin<OmniClipPlugin>('OmniClip');
 
 /** Pins the network's CA so HTTPS and WebSocket connections to the hub are accepted. */
@@ -103,9 +115,22 @@ export async function trustCa(pem: string): Promise<void> {
 
 /** Items shared to OmniClip, and whether the tile or widget asked to send the clipboard. */
 export async function takeShared(): Promise<{ items: SharedItem[]; sendClipboard: boolean }> {
-  if (platform !== 'android') return { items: [], sendClipboard: false };
+  if (platform === 'web') return { items: [], sendClipboard: false };
   const res = await OmniClip.take();
   return { items: res.items, sendClipboard: !!res.sendClipboard };
+}
+
+/** iOS: lets the share extension send to the hub without opening the app. */
+export async function saveExtensionSession(session: ExtensionSession | null): Promise<void> {
+  if (platform === 'ios') await OmniClip.saveSession({ session });
+}
+
+/** omniclip://send-clipboard (the iOS widget and Control Center button). */
+export async function onSendClipboardLink(fn: () => void): Promise<() => void> {
+  const handle = await App.addListener('appUrlOpen', (e) => e.url.startsWith('omniclip://send-clipboard') && fn());
+  const launch = await App.getLaunchUrl();
+  if (launch?.url?.startsWith('omniclip://send-clipboard')) fn();
+  return () => void handle.remove();
 }
 
 /** Back to the app the user came from (after the tile or widget sent the clipboard). */

@@ -17,6 +17,10 @@ contextBridge.exposeInMainWorld('omniclip', {
     sendTo: (id: string) => ipcRenderer.invoke('settings:sendTo', id),
     sendClipboardTo: (deviceId: string) => ipcRenderer.invoke('settings:sendClipboardTo', deviceId),
     ignoreApp: (name: string, ignore: boolean) => ipcRenderer.invoke('settings:ignoreApp', name, ignore),
+    saveSnippet: (id: string | null, snippet: { name: string; keyword?: string; text: string }) => ipcRenderer.invoke('settings:saveSnippet', id, snippet),
+    deleteSnippet: (id: string) => ipcRenderer.invoke('settings:deleteSnippet', id),
+    sendText: (text: string, deviceId?: string) => ipcRenderer.invoke('settings:sendText', text, deviceId),
+    setRelay: (url: string) => ipcRenderer.invoke('settings:setRelay', url),
     onChange: (fn: () => void) => {
       ipcRenderer.on('settings:changed', fn);
     },
