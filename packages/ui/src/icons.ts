@@ -36,6 +36,7 @@ export const ICONS = {
   chevron: '<path d="m9 6 6 6-6 6"/>',
   eye: '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/>',
   refresh: '<path d="M19.5 10A8 8 0 0 0 5 7.5L3.5 9.5"/><path d="M3.5 4.5v5h5"/><path d="M4.5 14A8 8 0 0 0 19 16.5l1.5-2"/><path d="M20.5 19.5v-5h-5"/>',
+  pencil: '<path d="M4 20h4L19 9a2.83 2.83 0 0 0-4-4L4 16z"/><path d="m13.5 6.5 4 4"/>',
   trash: '<path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13"/>',
   power: '<path d="M12 3v8"/><path d="M6.6 6.6a7.5 7.5 0 1 0 10.8 0"/>',
   wifi: '<path d="M2.5 9a14 14 0 0 1 19 0M5.5 12.5a9.5 9.5 0 0 1 13 0M8.6 16a5 5 0 0 1 6.8 0"/><circle cx="12" cy="19.2" r=".6"/>',

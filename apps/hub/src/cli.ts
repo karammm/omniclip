@@ -16,6 +16,9 @@ const historyKey = keyHex ? Buffer.from(keyHex, 'hex') : undefined;
 
 const hub = new Hub({ dataDir, webDir: path.join(root, 'apps/web/dist'), historyKey, log: (m) => console.log(`[hub] ${m}`) });
 await hub.start();
+// OMNICLIP_RELAY_URL connects this hub to an internet relay (see "Away from home" in the README)
+if (process.env.OMNICLIP_RELAY_URL !== undefined && process.env.OMNICLIP_RELAY_URL !== (hub.relay?.url ?? '')) hub.useRelayUrl(process.env.OMNICLIP_RELAY_URL);
+hub.on('relayStatus', (r: { status: string; detail: string }) => console.log(`[relay] ${r.status}${r.detail ? `: ${r.detail}` : ''}`));
 const stopAdvertising = advertise({ port: hub.ports.tls, networkId: hub.networkId, hubName: os.hostname() });
 
 async function printPairing(): Promise<void> {
@@ -29,7 +32,7 @@ async function printPairing(): Promise<void> {
   }
 }
 hub.on('pairingCode', () => void printPairing());
-hub.on('clip', (c) => console.log(`[clip] ${c.kind} from ${c.sourceName}: ${c.sensitive ? "(hidden)" : (c.text?.slice(0, 60) ?? c.name)}`));
+hub.on('clip', (c) => console.log(`[clip] ${c.kind} from ${c.sourceName}: ${c.sensitive ? "(hidden)" : c.enc ? "(end-to-end encrypted)" : (c.text?.slice(0, 60) ?? c.name)}`));
 await printPairing();
 
 async function shutdown(): Promise<void> {

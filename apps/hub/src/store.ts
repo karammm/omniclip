@@ -3,17 +3,31 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import type { Readable, Writable } from 'node:stream';
-import { BLOB_BUDGET_BYTES, HISTORY_LIMIT, type Clip, type DeviceRecord } from '@omniclip/protocol';
+import { BLOB_BUDGET_BYTES, HISTORY_LIMIT, newKeyring, type Clip, type DeviceRecord, type Keyring, type RelayConfig, type Snippet } from '@omniclip/protocol';
 import { isSealedFile, openBlob, seal, sealStream, unseal } from './seal.js';
 
 interface StoreData {
   networkId: string;
   devices: DeviceRecord[];
   clips: Clip[];
+  snippets: Snippet[];
+  /** The network's end-to-end keyring, shared with every paired device. */
+  keys: Keyring;
+  relay?: RelayConfig;
 }
 
-/** On disk, clips are replaced by `sealed` (encrypted JSON) when a history key is set. */
-type StoreFile = Omit<StoreData, 'clips'> & { clips?: Clip[]; sealed?: string };
+/** What's saved in `sealed` (encrypted with the history key). Before v0.8 it was just the clips array. */
+type Sealed = Clip[] | { clips: Clip[]; snippets: Snippet[] };
+
+/** On disk, clips and snippets are replaced by `sealed` (encrypted JSON) when a history key is set. */
+type StoreFile = Omit<StoreData, 'clips' | 'snippets' | 'keys'> & { clips?: Clip[]; snippets?: Snippet[]; sealed?: string; keys?: Keyring };
+
+export interface StoreSeed {
+  networkId: string;
+  devices: DeviceRecord[];
+  keys?: Keyring;
+  relay?: RelayConfig;
+}
 
 export interface StoreLimits {
   historyLimit: number;
@@ -44,7 +58,7 @@ export class Store {
   /** With `key` (32 bytes), clips and files are encrypted on disk. */
   constructor(
     dir: string,
-    seed?: { networkId: string; devices: DeviceRecord[] },
+    seed?: StoreSeed,
     limits?: Partial<StoreLimits>,
     private readonly key?: Buffer,
   ) {
@@ -58,28 +72,34 @@ export class Store {
     try {
       const raw = JSON.parse(fs.readFileSync(this.file, 'utf8')) as StoreFile;
       let clips = raw.clips ?? [];
+      let snippets = raw.snippets ?? [];
       if (raw.sealed) {
         try {
           if (!key) throw new Error('no key');
-          clips = JSON.parse(unseal(key, raw.sealed).toString('utf8')) as Clip[];
+          const sealed = JSON.parse(unseal(key, raw.sealed).toString('utf8')) as Sealed;
+          clips = Array.isArray(sealed) ? sealed : sealed.clips;
+          snippets = Array.isArray(sealed) ? [] : sealed.snippets;
         } catch {
           clips = [];
           this.historyLost = true;
         }
       }
-      data = { networkId: raw.networkId, devices: raw.devices, clips };
+      data = { networkId: raw.networkId, devices: raw.devices, clips, snippets, keys: raw.keys ?? newKeyring(), ...(raw.relay ? { relay: raw.relay } : {}) };
     } catch {
       data = null;
     }
     if (seed && (!data || data.networkId !== seed.networkId)) {
-      // Taking over a network from a previous hub: adopt its identity and devices.
-      data = { networkId: seed.networkId, devices: seed.devices, clips: [] };
+      // Taking over a network from a previous hub: adopt its identity, devices and keys.
+      data = { networkId: seed.networkId, devices: seed.devices, clips: [], snippets: [], keys: seed.keys ?? newKeyring(), ...(seed.relay ? { relay: seed.relay } : {}) };
     } else if (seed && data) {
       const known = new Map(data.devices.map((d) => [d.id, d]));
       for (const d of seed.devices) known.set(d.id, d);
       data.devices = [...known.values()];
+      // the registry holds the newest keyring (it's replicated whenever a key is added)
+      if (seed.keys) data.keys = { current: seed.keys.current, keys: { ...data.keys.keys, ...seed.keys.keys } };
+      if (seed.relay && !data.relay) data.relay = seed.relay;
     }
-    this.data = data ?? { networkId: crypto.randomUUID(), devices: [], clips: [] };
+    this.data = data ?? { networkId: crypto.randomUUID(), devices: [], clips: [], snippets: [], keys: newKeyring() };
     this.removeOrphanBlobs();
     this.save();
   }
@@ -97,8 +117,11 @@ export class Store {
     const tmp = `${this.file}.tmp`;
     // passwords and codes stay in memory only
     const clips = this.data.clips.filter((c) => !c.sensitive);
-    const { networkId, devices } = this.data;
-    const out: StoreFile = this.key ? { networkId, devices, sealed: seal(this.key, Buffer.from(JSON.stringify(clips))) } : { networkId, devices, clips };
+    const { networkId, devices, snippets, keys, relay } = this.data;
+    const common = { networkId, devices, keys, ...(relay ? { relay } : {}) };
+    const out: StoreFile = this.key
+      ? { ...common, sealed: seal(this.key, Buffer.from(JSON.stringify({ clips, snippets } satisfies Sealed))) }
+      : { ...common, clips, snippets };
     fs.writeFileSync(tmp, JSON.stringify(out), { mode: 0o600 });
     fs.renameSync(tmp, this.file);
   }
@@ -145,6 +168,46 @@ export class Store {
     return n;
   }
 
+  // ---- network keys and relay ----
+
+  get keys(): Keyring {
+    return this.data.keys;
+  }
+
+  setKeys(keys: Keyring): void {
+    this.data.keys = keys;
+    this.save();
+  }
+
+  get relay(): RelayConfig | undefined {
+    return this.data.relay;
+  }
+
+  setRelay(relay: RelayConfig | undefined): void {
+    if (relay) this.data.relay = relay;
+    else delete this.data.relay;
+    this.save();
+  }
+
+  // ---- snippets ----
+
+  snippets(): Snippet[] {
+    return [...this.data.snippets];
+  }
+
+  putSnippet(snippet: Snippet): void {
+    this.data.snippets = [snippet, ...this.data.snippets.filter((s) => s.id !== snippet.id)];
+    this.save();
+  }
+
+  removeSnippet(id: string): boolean {
+    const before = this.data.snippets.length;
+    this.data.snippets = this.data.snippets.filter((s) => s.id !== id);
+    if (this.data.snippets.length === before) return false;
+    this.save();
+    return true;
+  }
+
   // ---- devices ----
 
   devices(): DeviceRecord[] {
@@ -167,6 +230,14 @@ export class Store {
     d.name = name;
     this.save();
     return d;
+  }
+
+  setTunnelKey(id: string, tunnelKey: string): void {
+    const d = this.data.devices.find((x) => x.id === id);
+    if (d) {
+      d.tunnelKey = tunnelKey;
+      this.save();
+    }
   }
 
   touchDevice(id: string): void {

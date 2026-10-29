@@ -23,9 +23,11 @@ import {
   type MenuItemConstructorOptions,
 } from 'electron';
 import QRCode from 'qrcode';
-import { MAX_RICH_BYTES, MAX_TEXT_BYTES, MAX_UPLOAD_BYTES, detectSensitive, type Clip, type Device, type Platform } from '@omniclip/protocol';
+import { MAX_RICH_BYTES, MAX_TEXT_BYTES, MAX_UPLOAD_BYTES, detectSensitive, expandSnippet, matchSnippets, normalizeKeyword, type Clip, type Device, type PairResponse, type Platform } from '@omniclip/protocol';
 import { Hub, advertise, discover, shutdownMdns, type DiscoveredHub } from '@omniclip/hub';
-import { SyncClient, pairWithHub, probe, type HubAddress, type SendOptions } from './client.js';
+import { HUB_PORT_TLS, RelayConnection, type WebSocketCtor } from '@omniclip/protocol';
+import WebSocket from 'ws';
+import { SyncClient, pairWithHub, probe, type HubAddress, type PlainSnippet, type SendOptions } from './client.js';
 import { ConfigStore, type Credential, type SensitiveMode } from './config.js';
 import { EchoGuard } from './echoGuard.js';
 import { decideRole, shouldStepDown } from './election.js';
@@ -101,6 +103,7 @@ const state = {
   devices: [] as Device[],
   recent: [] as Clip[],
   pinned: [] as Clip[],
+  snippets: [] as PlainSnippet[],
   hubDeviceId: '',
   /** Whether the hub on this computer encrypts saved history ('' when this computer isn't the hub). */
   historyEncryption: '' as '' | 'on' | 'unavailable',
@@ -176,7 +179,11 @@ async function boot(): Promise<void> {
     const decision = decideRole(found, cfg.knownNetworks());
     log(`discovered ${found.length} hub(s) -> ${decision.role}`);
 
-    if (decision.role === 'hub') return await becomeHub();
+    if (decision.role === 'hub') {
+      // away from home: if the hub is reachable through the relay, join it there instead of starting a second hub
+      if (await joinThroughRelay()) return;
+      return await becomeHub();
+    }
     const addr = await probe(decision.hub.addresses, decision.hub.port);
     if (!addr) {
       log('hub advertised but unreachable; retrying');
@@ -240,7 +247,7 @@ async function becomeHub(): Promise<void> {
   state.hub = hub;
   state.hubLabel = 'this computer';
   const cred = hub.createLocalDevice(cfg.data.deviceName, PLATFORM, cfg.data.credentials[hub.networkId]?.token);
-  cfg.data.credentials[hub.networkId] = { token: cred.token, deviceId: cred.deviceId, caPem: cred.caPem };
+  cfg.data.credentials[hub.networkId] = credentialFrom(cred);
   cfg.data.registry = hub.registry();
   cfg.save();
 
@@ -255,6 +262,7 @@ async function becomeHub(): Promise<void> {
     cfg.data.registry = hub.registry();
     cfg.save();
   });
+  hub.on('relayStatus', () => settingsChanged());
 
   attachClient({ host: '127.0.0.1', port: hub.ports.tls }, cfg.data.credentials[hub.networkId]!, hub.networkId);
   setRole('hub');
@@ -270,21 +278,77 @@ async function becomeHub(): Promise<void> {
   }, 30_000);
 }
 
-function joinAsClient(addr: HubAddress, cred: Credential, networkId: string): void {
-  attachClient(addr, cred, networkId);
+/**
+ * Tries each network this computer belongs to that has a relay: if its hub answers through the
+ * relay (the tunnel handshake succeeds, so it's really there), joins it that way.
+ */
+async function joinThroughRelay(): Promise<boolean> {
+  for (const [networkId, cred] of Object.entries(cfg.data.credentials)) {
+    if (!cred.relay || !cred.tunnelKey || !cred.keys) continue;
+    const test = new RelayConnection(cred.relay, networkId, cred.deviceId, cred.tunnelKey, WebSocket as unknown as WebSocketCtor);
+    try {
+      await test.open(8000);
+    } catch (err) {
+      log(`relay: hub not reachable (${String((err as Error).message)})`);
+      continue;
+    } finally {
+      test.close();
+    }
+    const last = cfg.data.lastHub?.networkId === networkId ? cfg.data.lastHub : undefined;
+    log('joining the hub through the relay');
+    state.hubLabel = 'your hub';
+    joinAsClient(last ? { host: last.host, port: last.port } : { host: '127.0.0.1', port: HUB_PORT_TLS }, cred, networkId, true);
+    return true;
+  }
+  return false;
+}
+
+function joinAsClient(addr: HubAddress, cred: Credential, networkId: string, viaRelay = false): void {
+  if (!viaRelay) {
+    cfg.data.lastHub = { networkId, host: addr.host, port: addr.port };
+    cfg.save();
+  }
+  attachClient(addr, cred, networkId, viaRelay);
   setRole('client');
-  // take over as hub if the hub disappears
+  // take over as hub if the hub disappears (giving the relay time to step in first)
   watchdog = setInterval(() => {
     const c = state.client;
-    if (c && c.status !== 'online' && Date.now() - c.lastOnline > TAKEOVER_AFTER_MS) {
+    const limit = c?.canRelay ? TAKEOVER_AFTER_MS * 3 : TAKEOVER_AFTER_MS;
+    if (c && c.status !== 'online' && Date.now() - c.lastOnline > limit) {
       log('lost the hub; re-electing');
       void boot();
     }
   }, 2000);
 }
 
-function attachClient(addr: HubAddress, cred: Credential, networkId: string): void {
-  const client = new SyncClient(addr, cred.token, cred.caPem);
+/** What this computer keeps from a pairing: the token, the hub's CA and the end-to-end keys. */
+function credentialFrom(res: PairResponse): Credential {
+  return {
+    token: res.token,
+    deviceId: res.deviceId,
+    caPem: res.caPem,
+    ...(res.keys ? { keys: res.keys } : {}),
+    ...(res.tunnelKey ? { tunnelKey: res.tunnelKey } : {}),
+    ...(res.relay ? { relay: res.relay } : {}),
+  };
+}
+
+function attachClient(addr: HubAddress, cred: Credential, networkId: string, viaRelay = false): void {
+  const client = new SyncClient(addr, cred.token, cred.caPem, { keys: cred.keys, tunnelKey: cred.tunnelKey, relay: cred.relay }, { networkId, deviceId: cred.deviceId, viaRelay });
+  client.on('e2e', (e2e) => {
+    const saved = cfg.data.credentials[networkId];
+    if (!saved) return;
+    for (const k of ['keys', 'tunnelKey', 'relay'] as const) {
+      if (e2e[k]) (saved as unknown as Record<string, unknown>)[k] = e2e[k];
+      else delete saved[k];
+    }
+    cfg.save();
+    settingsChanged();
+  });
+  client.on('snippets', (snippets) => {
+    state.snippets = snippets;
+    settingsChanged();
+  });
   state.client = client;
   state.networkId = networkId;
   state.deviceId = cred.deviceId;
@@ -292,7 +356,8 @@ function attachClient(addr: HubAddress, cred: Credential, networkId: string): vo
     updateTray();
     settingsChanged();
   });
-  client.on('hello', ({ deviceId, hubDeviceId, history, pinned, devices }) => {
+  client.on('hello', ({ deviceId, hubDeviceId, history, pinned, devices, snippets }) => {
+    state.snippets = snippets;
     state.deviceId = deviceId;
     state.hubDeviceId = hubDeviceId;
     state.devices = devices;
@@ -885,13 +950,43 @@ async function pasteIntoFrontApp(): Promise<void> {
   }
 }
 
+function snippetItem(sn: PlainSnippet): PickerItem {
+  const keyword = normalizeKeyword(sn.keyword);
+  return {
+    id: `snippet:${sn.id}`,
+    kind: 'snippet',
+    label: sn.name || sn.text.replace(/\s+/g, ' ').trim().slice(0, 80),
+    source: keyword ? `Snippet · ;${keyword}` : 'Snippet',
+    createdAt: sn.updatedAt,
+    pinned: false,
+    sensitive: false,
+    folder: false,
+  };
+}
+
 ipcMain.handle('picker:list', async (_e, query: string) => {
-  const items = (await pickerClips(String(query ?? ''))).map(pickerItem);
+  const q = String(query ?? '');
+  const snippets = matchSnippets(state.snippets, q).map(snippetItem);
+  const items = [...snippets, ...(q.trim().startsWith(';') ? [] : (await pickerClips(q)).map(pickerItem))];
   const action = cfg.data.autoPaste ? 'Paste' : 'Copy';
   const offline = state.client?.status !== 'online';
-  return { items, action, note: offline ? 'Offline: showing clips this computer already has' : '' };
+  const note = offline ? 'Offline: showing clips this computer already has' : state.snippets.length && !q ? 'Type ; for snippets' : '';
+  return { items, action, note };
 });
+/** Puts a snippet on the clipboard (placeholders filled in) and pastes it like a picked clip. */
+async function chooseSnippet(id: string): Promise<void> {
+  const sn = state.snippets.find((x) => x.id === id);
+  closePicker();
+  if (!sn) return;
+  const text = expandSnippet(sn.text, await clipboard.readText());
+  await writeClipboard(async () => clipboard.writeText(text), true);
+  if (!cfg.data.autoPaste) return notify('OmniClip', `Copied. Press ${PASTE_KEY} to paste.`);
+  await new Promise((r) => setTimeout(r, process.platform === 'darwin' ? 200 : 120));
+  await pasteIntoFrontApp();
+}
+
 ipcMain.handle('picker:choose', async (_e, id: string) => {
+  if (String(id).startsWith('snippet:')) return chooseSnippet(String(id).slice('snippet:'.length));
   const clip = await findClip(String(id));
   closePicker();
   await applyClip(clip, true);
@@ -949,7 +1044,7 @@ ipcMain.handle('omniclip:join', async (_e, code: string) => {
   const pending = state.pending;
   if (!pending) throw new Error('No hub to join');
   const res = await pairWithHub(pending.addr, String(code).trim(), cfg.data.deviceName, PLATFORM);
-  cfg.data.credentials[res.networkId] = { token: res.token, deviceId: res.deviceId, caPem: res.caPem };
+  cfg.data.credentials[res.networkId] = credentialFrom(res);
   cfg.save();
   state.pending = null;
   joinAsClient(pending.addr, cfg.data.credentials[res.networkId]!, res.networkId);
@@ -970,7 +1065,8 @@ function stateLabel(): string {
     case 'hub':
       return `Hub · ${onlineCount()} of ${state.devices.length} devices online`;
     case 'client':
-      return state.client?.status === 'online' ? `Connected to ${state.hubLabel} · ${onlineCount()} online` : `Reconnecting to ${state.hubLabel}…`;
+      if (state.client?.status !== 'online') return `Reconnecting to ${state.hubLabel}…`;
+      return `${state.client.via === 'relay' ? 'Connected through the relay' : `Connected to ${state.hubLabel}`} · ${onlineCount()} online`;
     case 'unpaired':
       return `Found ${state.pending?.hub.hubName ?? 'a hub'}. Not joined yet.`;
     case 'error':
@@ -1029,6 +1125,7 @@ function settingsState() {
     hubDeviceId: state.hubDeviceId,
     devices: state.devices,
     pinned: state.pinned,
+    snippets: [...state.snippets].sort((a, b) => (a.name ?? '').localeCompare(b.name ?? '')),
     paused: cfg.data.paused,
     sendCopiedFiles: cfg.data.sendCopiedFiles,
     filesToClipboard: cfg.data.filesToClipboard,
@@ -1041,6 +1138,7 @@ function settingsState() {
     hotkey: cfg.data.hotkey,
     hotkeys: HOTKEYS.map((value) => ({ value, label: acceleratorLabel(value) })),
     hotkeyError,
+    hotkeyLabel: cfg.data.hotkey ? acceleratorLabel(cfg.data.hotkey) : 'set a shortcut in General',
     autoPaste: cfg.data.autoPaste,
     sendText: cfg.data.sendText,
     sendImages: cfg.data.sendImages,
@@ -1052,7 +1150,22 @@ function settingsState() {
     suggestedApps: [...new Set([...state.recentApps, ...PASSWORD_MANAGERS])].filter((a) => !matchesApp([a], cfg.data.ignoredApps)),
     frontAppHint: process.platform === 'linux' ? 'Needs xdotool, and works on X11 only.' : '',
     historyEncryption: state.historyEncryption,
+    relay: relayState(),
     hubLabel: state.hubLabel,
+  };
+}
+
+/** For Settings → Away from home: the relay address and how it's going. */
+function relayState(): { url: string; status: string; detail: string; via: string; editable: boolean } {
+  const cred = state.networkId ? cfg.data.credentials[state.networkId] : undefined;
+  const url = state.hub?.relay?.url ?? cred?.relay?.url ?? '';
+  const hub = state.hub?.relayStatus;
+  return {
+    url,
+    status: hub ? hub.status : url ? 'set' : 'off',
+    detail: hub?.detail ?? '',
+    via: state.client?.via ?? 'lan',
+    editable: state.role === 'hub' || (state.role === 'client' && state.client?.via === 'lan'),
   };
 }
 
@@ -1130,6 +1243,27 @@ ipcMain.handle('settings:search', (_e, query: string) => connectedClient().searc
 ipcMain.handle('settings:pin', (_e, id: string, pinned: boolean) => connectedClient().setPinned(id, !!pinned));
 ipcMain.handle('settings:copy', async (_e, id: string) => applyClip(await findClip(id), false));
 ipcMain.handle('settings:pair', () => openPairWindow());
+ipcMain.handle('settings:setRelay', async (_e, url: string) => {
+  const clean = String(url ?? '').trim();
+  if (state.hub) state.hub.useRelayUrl(clean);
+  else await connectedClient().setRelay(clean);
+  settingsChanged();
+});
+ipcMain.handle('settings:saveSnippet', async (_e, id: string | null, snippet: { name?: string; keyword?: string; text?: string }) => {
+  const text = String(snippet?.text ?? '');
+  if (!text.trim()) throw new Error('A snippet needs some text.');
+  const keyword = normalizeKeyword(snippet.keyword);
+  const clash = state.snippets.find((x) => keyword && normalizeKeyword(x.keyword) === keyword && x.id !== id);
+  if (clash) throw new Error(`;${keyword} is already used by "${clash.name || 'another snippet'}".`);
+  await connectedClient().saveSnippet(id || crypto.randomUUID(), { name: String(snippet.name ?? '').trim().slice(0, 100), ...(keyword ? { keyword } : {}), text });
+});
+ipcMain.handle('settings:deleteSnippet', (_e, id: string) => connectedClient().deleteSnippet(String(id)));
+// "Edit & send": text typed or changed in Settings, to every device or one
+ipcMain.handle('settings:sendText', async (_e, text: string, deviceId?: string) => {
+  const t = String(text ?? '');
+  if (!t.trim()) throw new Error('There is nothing to send.');
+  await connectedClient().sendText(t, deviceId ? { to: deviceByIdOrThrow(String(deviceId)).id } : {});
+});
 ipcMain.handle('settings:sendClipboardTo', (_e, deviceId: string) => sendClipboardTo(deviceByIdOrThrow(String(deviceId))));
 // pops a native menu of devices under the mouse; resolves once one is picked (or the menu is dismissed)
 ipcMain.handle('settings:sendTo', async (_e, clipId: string) => {

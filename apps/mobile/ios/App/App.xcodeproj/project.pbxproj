@@ -7,31 +7,86 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0A3E758377049F9FAADF6521 /* ShareExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 78443CA8CC2334C87ACA94A8 /* ShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		0C3ED7D0752726D4897A693E /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EFE4A71F1B817677B71A2D2E /* Foundation.framework */; };
+		2755A122B6F1A798D3896CBF /* OmniClipCrypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CE7DB79AA8EED6931D42FFC /* OmniClipCrypto.swift */; };
 		2FAD9763203C412B000D30F8 /* config.xml in Resources */ = {isa = PBXBuildFile; fileRef = 2FAD9762203C412B000D30F8 /* config.xml */; };
+		3F0AAD75F19CF8BDAD6764B8 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E0E15F0406BA30B6D36BA68E /* WidgetKit.framework */; };
 		4D22ABE92AF431CB00220026 /* CapApp-SPM in Frameworks */ = {isa = PBXBuildFile; productRef = 4D22ABE82AF431CB00220026 /* CapApp-SPM */; };
 		50379B232058CBB4000EE86E /* capacitor.config.json in Resources */ = {isa = PBXBuildFile; fileRef = 50379B222058CBB4000EE86E /* capacitor.config.json */; };
 		504EC3081FED79650016851F /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 504EC3071FED79650016851F /* AppDelegate.swift */; };
-		A1C0FFEE0000000000000001 /* OmniClipPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C0FFEE0000000000000002 /* OmniClipPlugin.swift */; };
 		504EC30D1FED79650016851F /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30B1FED79650016851F /* Main.storyboard */; };
 		504EC30F1FED79650016851F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30E1FED79650016851F /* Assets.xcassets */; };
 		504EC3121FED79650016851F /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC3101FED79650016851F /* LaunchScreen.storyboard */; };
 		50B271D11FEDC1A000F3C39B /* public in Resources */ = {isa = PBXBuildFile; fileRef = 50B271D01FEDC1A000F3C39B /* public */; };
+		8746397D06AA10AACD2314B6 /* HubClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FB547407F94105D5E48F544 /* HubClient.swift */; };
+		91F621183C55D174B0AC2E4C /* OmniClipWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 32254A156FF2B70D27D7EBAA /* OmniClipWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9582B6822FE993A50072D4E8 /* SceneDelegate.swift */; };
+		A1C0FFEE0000000000000001 /* OmniClipPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C0FFEE0000000000000002 /* OmniClipPlugin.swift */; };
+		A4D6E26E9DC29C9172D70F94 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EFE4A71F1B817677B71A2D2E /* Foundation.framework */; };
+		A505E980C33E9EC50E090BEE /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E0B35B2CAC7BD917D2CBDFB5 /* SwiftUI.framework */; };
+		CCB06CED0AFED16A2CB6DB03 /* OmniClipWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23C4E96A9AC84B940C9D9E23 /* OmniClipWidget.swift */; };
+		E8313F49E4B9143B4B214A05 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DC809409A353EC030346AFB /* ShareViewController.swift */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		4144AAA4A53A8F2E00C34B26 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 504EC2FC1FED79650016851F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 6D634F4C87E78D94FFCF410E;
+			remoteInfo = ShareExtension;
+		};
+		4D722E5CB1C570147C9EF7C6 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 504EC2FC1FED79650016851F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 28BC39216630260296D6F93E;
+			remoteInfo = OmniClipWidget;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		C3093F64C93BB72888BB6C0E /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				0A3E758377049F9FAADF6521 /* ShareExtension.appex in Embed Foundation Extensions */,
+				91F621183C55D174B0AC2E4C /* OmniClipWidget.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		23C4E96A9AC84B940C9D9E23 /* OmniClipWidget.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OmniClipWidget.swift; sourceTree = "<group>"; };
 		2FAD9762203C412B000D30F8 /* config.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = config.xml; sourceTree = "<group>"; };
+		32254A156FF2B70D27D7EBAA /* OmniClipWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = OmniClipWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		3AFF8D5CA476C08A70D4D4E3 /* ShareExtension.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = ShareExtension.entitlements; sourceTree = "<group>"; };
 		50379B222058CBB4000EE86E /* capacitor.config.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = capacitor.config.json; sourceTree = "<group>"; };
 		504EC3041FED79650016851F /* App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = App.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		504EC3071FED79650016851F /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
-		A1C0FFEE0000000000000002 /* OmniClipPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OmniClipPlugin.swift; sourceTree = "<group>"; };
 		504EC30C1FED79650016851F /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
 		504EC30E1FED79650016851F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		504EC3111FED79650016851F /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		504EC3131FED79650016851F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		50B271D01FEDC1A000F3C39B /* public */ = {isa = PBXFileReference; lastKnownFileType = folder; path = public; sourceTree = "<group>"; };
+		5E79A92167F19D905FBE0192 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		78443CA8CC2334C87ACA94A8 /* ShareExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		7FB547407F94105D5E48F544 /* HubClient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HubClient.swift; sourceTree = "<group>"; };
 		9582B6822FE993A50072D4E8 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
 		958DCC722DB07C7200EA8C5F /* debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = debug.xcconfig; path = ../debug.xcconfig; sourceTree = SOURCE_ROOT; };
+		9CE7DB79AA8EED6931D42FFC /* OmniClipCrypto.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OmniClipCrypto.swift; sourceTree = "<group>"; };
+		9DC809409A353EC030346AFB /* ShareViewController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
+		A1C0FFEE0000000000000002 /* OmniClipPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OmniClipPlugin.swift; sourceTree = "<group>"; };
+		DED90AA6C7FB260CF22EA7E3 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		E0B35B2CAC7BD917D2CBDFB5 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.0.sdk/System/Library/Frameworks/SwiftUI.framework; sourceTree = DEVELOPER_DIR; };
+		E0E15F0406BA30B6D36BA68E /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.0.sdk/System/Library/Frameworks/WidgetKit.framework; sourceTree = DEVELOPER_DIR; };
+		EFE4A71F1B817677B71A2D2E /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
+		F53B563BA7723AE7ACFAE22C /* App.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -43,15 +98,46 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		70C29B4EC00149B9134C0513 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A4D6E26E9DC29C9172D70F94 /* Foundation.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BB746AE7757D34F7D1500165 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0C3ED7D0752726D4897A693E /* Foundation.framework in Frameworks */,
+				3F0AAD75F19CF8BDAD6764B8 /* WidgetKit.framework in Frameworks */,
+				A505E980C33E9EC50E090BEE /* SwiftUI.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		4381BE15A7FFECE24D6B2785 /* iOS */ = {
+			isa = PBXGroup;
+			children = (
+				EFE4A71F1B817677B71A2D2E /* Foundation.framework */,
+				E0E15F0406BA30B6D36BA68E /* WidgetKit.framework */,
+				E0B35B2CAC7BD917D2CBDFB5 /* SwiftUI.framework */,
+			);
+			name = iOS;
+			sourceTree = "<group>";
+		};
 		504EC2FB1FED79650016851F = {
 			isa = PBXGroup;
 			children = (
 				958DCC722DB07C7200EA8C5F /* debug.xcconfig */,
 				504EC3061FED79650016851F /* App */,
 				504EC3051FED79650016851F /* Products */,
+				B0D7D9575692CF2ADFFFCC31 /* Frameworks */,
+				95569704421C508E1DDB64F1 /* ShareExtension */,
+				AE8BA20D567E38DF47017609 /* OmniClipWidget */,
 			);
 			sourceTree = "<group>";
 		};
@@ -59,6 +145,8 @@
 			isa = PBXGroup;
 			children = (
 				504EC3041FED79650016851F /* App.app */,
+				78443CA8CC2334C87ACA94A8 /* ShareExtension.appex */,
+				32254A156FF2B70D27D7EBAA /* OmniClipWidget.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -76,13 +164,62 @@
 				504EC3131FED79650016851F /* Info.plist */,
 				2FAD9762203C412B000D30F8 /* config.xml */,
 				50B271D01FEDC1A000F3C39B /* public */,
+				F53B563BA7723AE7ACFAE22C /* App.entitlements */,
 			);
 			path = App;
+			sourceTree = "<group>";
+		};
+		95569704421C508E1DDB64F1 /* ShareExtension */ = {
+			isa = PBXGroup;
+			children = (
+				9DC809409A353EC030346AFB /* ShareViewController.swift */,
+				7FB547407F94105D5E48F544 /* HubClient.swift */,
+				9CE7DB79AA8EED6931D42FFC /* OmniClipCrypto.swift */,
+				DED90AA6C7FB260CF22EA7E3 /* Info.plist */,
+				3AFF8D5CA476C08A70D4D4E3 /* ShareExtension.entitlements */,
+			);
+			name = ShareExtension;
+			path = ShareExtension;
+			sourceTree = "<group>";
+		};
+		AE8BA20D567E38DF47017609 /* OmniClipWidget */ = {
+			isa = PBXGroup;
+			children = (
+				23C4E96A9AC84B940C9D9E23 /* OmniClipWidget.swift */,
+				5E79A92167F19D905FBE0192 /* Info.plist */,
+			);
+			name = OmniClipWidget;
+			path = OmniClipWidget;
+			sourceTree = "<group>";
+		};
+		B0D7D9575692CF2ADFFFCC31 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				4381BE15A7FFECE24D6B2785 /* iOS */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		28BC39216630260296D6F93E /* OmniClipWidget */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A1CF98EC1F0CDE056834C170 /* Build configuration list for PBXNativeTarget "OmniClipWidget" */;
+			buildPhases = (
+				C97BFC854E6298B50B16E83C /* Sources */,
+				BB746AE7757D34F7D1500165 /* Frameworks */,
+				50D2E23ACD4EEB42B6F8093A /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = OmniClipWidget;
+			productName = OmniClipWidget;
+			productReference = 32254A156FF2B70D27D7EBAA /* OmniClipWidget.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		504EC3031FED79650016851F /* App */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 504EC3161FED79650016851F /* Build configuration list for PBXNativeTarget "App" */;
@@ -90,10 +227,13 @@
 				504EC3001FED79650016851F /* Sources */,
 				504EC3011FED79650016851F /* Frameworks */,
 				504EC3021FED79650016851F /* Resources */,
+				C3093F64C93BB72888BB6C0E /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				E66DD47FA722745DDE110332 /* PBXTargetDependency */,
+				6528E5AA14DEBF699C170526 /* PBXTargetDependency */,
 			);
 			name = App;
 			packageProductDependencies = (
@@ -102,6 +242,23 @@
 			productName = App;
 			productReference = 504EC3041FED79650016851F /* App.app */;
 			productType = "com.apple.product-type.application";
+		};
+		6D634F4C87E78D94FFCF410E /* ShareExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 78330677D0277F3459F39205 /* Build configuration list for PBXNativeTarget "ShareExtension" */;
+			buildPhases = (
+				D1A66053FA5C5AAF74AC55DB /* Sources */,
+				70C29B4EC00149B9134C0513 /* Frameworks */,
+				EB6A387717C79994A4F80ACF /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ShareExtension;
+			productName = ShareExtension;
+			productReference = 78443CA8CC2334C87ACA94A8 /* ShareExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -136,6 +293,8 @@
 			projectRoot = "";
 			targets = (
 				504EC3031FED79650016851F /* App */,
+				6D634F4C87E78D94FFCF410E /* ShareExtension */,
+				28BC39216630260296D6F93E /* OmniClipWidget */,
 			);
 		};
 /* End PBXProject section */
@@ -154,6 +313,20 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		50D2E23ACD4EEB42B6F8093A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		EB6A387717C79994A4F80ACF /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -167,7 +340,40 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		C97BFC854E6298B50B16E83C /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CCB06CED0AFED16A2CB6DB03 /* OmniClipWidget.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D1A66053FA5C5AAF74AC55DB /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E8313F49E4B9143B4B214A05 /* ShareViewController.swift in Sources */,
+				8746397D06AA10AACD2314B6 /* HubClient.swift in Sources */,
+				2755A122B6F1A798D3896CBF /* OmniClipCrypto.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		6528E5AA14DEBF699C170526 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = OmniClipWidget;
+			target = 28BC39216630260296D6F93E /* OmniClipWidget */;
+			targetProxy = 4D722E5CB1C570147C9EF7C6 /* PBXContainerItemProxy */;
+		};
+		E66DD47FA722745DDE110332 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = ShareExtension;
+			target = 6D634F4C87E78D94FFCF410E /* ShareExtension */;
+			targetProxy = 4144AAA4A53A8F2E00C34B26 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin PBXVariantGroup section */
 		504EC30B1FED79650016851F /* Main.storyboard */ = {
@@ -189,6 +395,32 @@
 /* End PBXVariantGroup section */
 
 /* Begin XCBuildConfiguration section */
+		356BA1EE02536DDD73F32DBF /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = ShareExtension/ShareExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 800;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ShareExtension/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.8.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.omniclip.app.share;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
 		504EC3141FED79650016851F /* Debug */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 958DCC722DB07C7200EA8C5F /* debug.xcconfig */;
@@ -303,15 +535,16 @@
 			baseConfigurationReference = 958DCC722DB07C7200EA8C5F /* debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 700;
+				CURRENT_PROJECT_VERSION = 800;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.7.0;
+				MARKETING_VERSION = 0.8.0;
 				OTHER_SWIFT_FLAGS = "$(inherited) \"-D\" \"COCOAPODS\" \"-DDEBUG\"";
 				PRODUCT_BUNDLE_IDENTIFIER = com.omniclip.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -325,20 +558,99 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 700;
+				CURRENT_PROJECT_VERSION = 800;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.7.0;
+				MARKETING_VERSION = 0.8.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.omniclip.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		6DB45FAE04E96BCC16495696 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 800;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = OmniClipWidget/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.8.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.omniclip.app.widget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		B93258D95C996663E4802D05 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = ShareExtension/ShareExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 800;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ShareExtension/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.8.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.omniclip.app.share;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		C3730225A31E18FA5F3E3D1B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 800;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = OmniClipWidget/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.8.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.omniclip.app.widget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
 			};
 			name = Release;
 		};
@@ -359,6 +671,24 @@
 			buildConfigurations = (
 				504EC3171FED79650016851F /* Debug */,
 				504EC3181FED79650016851F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		78330677D0277F3459F39205 /* Build configuration list for PBXNativeTarget "ShareExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B93258D95C996663E4802D05 /* Release */,
+				356BA1EE02536DDD73F32DBF /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A1CF98EC1F0CDE056834C170 /* Build configuration list for PBXNativeTarget "OmniClipWidget" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C3730225A31E18FA5F3E3D1B /* Release */,
+				6DB45FAE04E96BCC16495696 /* Debug */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

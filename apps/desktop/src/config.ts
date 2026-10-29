@@ -1,11 +1,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { Registry } from '@omniclip/protocol';
+import type { Keyring, Registry, RelayConfig } from '@omniclip/protocol';
 
 export interface Credential {
   token: string;
   deviceId: string;
   caPem: string;
+  /** End-to-end keyring, relay tunnel key and relay (hubs from v0.8 on). */
+  keys?: Keyring;
+  tunnelKey?: string;
+  relay?: RelayConfig;
 }
 
 export interface Config {
@@ -14,6 +18,8 @@ export interface Config {
   credentials: Record<string, Credential>;
   /** Last registry received from a hub, used to take over if that hub disappears. */
   registry?: Registry;
+  /** Where the hub was last reached on the local network; checked while connected through the relay. */
+  lastHub?: { networkId: string; host: string; port: number };
   paused: boolean;
   /** Put files that arrive from other devices on the clipboard, ready to paste in Finder/Explorer. */
   filesToClipboard: boolean;

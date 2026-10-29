@@ -3,7 +3,7 @@ import { z } from 'zod';
 export const HUB_PORT_TLS = 7878;
 export const HUB_PORT_HTTP = 7879;
 export const MDNS_TYPE = 'omniclip';
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 export const MAX_TEXT_BYTES = 1024 * 1024;
 /** Formatting (HTML or RTF) bigger than this is dropped and the plain text is sent alone. */
@@ -19,6 +19,14 @@ export type Platform = z.infer<typeof PlatformSchema>;
 
 export const ClipKindSchema = z.enum(['text', 'image', 'file']);
 export type ClipKind = z.infer<typeof ClipKindSchema>;
+
+export const EnvelopeSchema = z.object({ v: z.literal(1), kid: z.string(), box: z.string() });
+
+export const KeyringSchema = z.object({ current: z.string(), keys: z.record(z.string(), z.string()) });
+
+/** An internet relay devices fall back to when they can't reach the hub on the local network. */
+export const RelayConfigSchema = z.object({ url: z.string(), token: z.string() });
+export type RelayConfig = z.infer<typeof RelayConfigSchema>;
 
 export const ClipSchema = z.object({
   id: z.string(),
@@ -47,8 +55,31 @@ export const ClipSchema = z.object({
   /** Looks like a password, code or card number: never written to disk, deleted at `expiresAt`. */
   sensitive: z.boolean().optional(),
   expiresAt: z.number().optional(),
+  /**
+   * End-to-end encrypted contents (text, html, rtf, name, mime, hash). Paired devices decrypt it;
+   * the hub only sees kind, size, devices and times. Encrypted files are uploaded already encrypted.
+   */
+  enc: EnvelopeSchema.optional(),
 });
 export type Clip = z.infer<typeof ClipSchema>;
+
+/** Reusable text, stored on the hub end-to-end encrypted like clips. */
+export const SnippetSchema = z.object({
+  id: z.string(),
+  name: z.string().optional(),
+  keyword: z.string().optional(),
+  text: z.string().optional(),
+  enc: EnvelopeSchema.optional(),
+  updatedAt: z.number(),
+});
+export type Snippet = z.infer<typeof SnippetSchema>;
+
+export const SnippetPayloadSchema = z.object({
+  name: z.string().max(100),
+  keyword: z.string().max(40).optional(),
+  text: z.string().min(1).max(100_000),
+});
+export type SnippetPayload = z.infer<typeof SnippetPayloadSchema>;
 
 export const DeviceSchema = z.object({
   id: z.string(),
@@ -65,6 +96,8 @@ export type Device = z.infer<typeof DeviceSchema>;
 /** Device record as stored by the hub (and replicated to desktop peers for failover). */
 export const DeviceRecordSchema = DeviceSchema.omit({ online: true, addresses: true }).extend({
   tokenHash: z.string(),
+  /** Per-device secret for the end-to-end encrypted tunnel through the relay. */
+  tunnelKey: z.string().optional(),
 });
 export type DeviceRecord = z.infer<typeof DeviceRecordSchema>;
 
@@ -72,6 +105,8 @@ export const RegistrySchema = z.object({
   networkId: z.string(),
   devices: z.array(DeviceRecordSchema),
   ca: z.object({ certPem: z.string(), keyPem: z.string() }),
+  keys: KeyringSchema.optional(),
+  relay: RelayConfigSchema.optional(),
 });
 export type Registry = z.infer<typeof RegistrySchema>;
 
@@ -89,6 +124,10 @@ export const PairResponseSchema = z.object({
   deviceId: z.string(),
   networkId: z.string(),
   caPem: z.string(),
+  /** Hubs from v0.8 on: the network keyring, this device's tunnel key and the relay, if one is set up. */
+  keys: KeyringSchema.optional(),
+  tunnelKey: z.string().optional(),
+  relay: RelayConfigSchema.optional(),
 });
 export type PairResponse = z.infer<typeof PairResponseSchema>;
 
@@ -97,6 +136,12 @@ export const TextClipRequestSchema = z.object({
   html: z.string().optional(),
   rtf: z.string().optional(),
 });
+
+/** A text clip encrypted by the sender; `size` is the plain text's length in bytes. */
+export const EncryptedTextRequestSchema = z.object({ enc: EnvelopeSchema, size: z.number().int().nonnegative() });
+
+/** Header sent by clients that encrypt and decrypt themselves. Without it the hub does it for them. */
+export const E2E_HEADER = 'x-omniclip-e2e';
 
 export const PinRequestSchema = z.object({ pinned: z.boolean() });
 
@@ -114,7 +159,16 @@ export const ServerMessageSchema = z.discriminatedUnion('type', [
     /** Pinned clips, which may be older than `history` reaches. */
     pinned: z.array(ClipSchema).optional(),
     devices: z.array(DeviceSchema),
+    /** Only on end-to-end connections over the local network. */
+    keys: KeyringSchema.optional(),
+    tunnelKey: z.string().optional(),
+    relay: RelayConfigSchema.optional(),
+    snippets: z.array(SnippetSchema).optional(),
   }),
+  /** The keyring changed (a device was removed) or a relay was set up. */
+  z.object({ type: z.literal('keys'), keys: KeyringSchema }),
+  z.object({ type: z.literal('relay'), relay: RelayConfigSchema.nullable() }),
+  z.object({ type: z.literal('snippets'), snippets: z.array(SnippetSchema) }),
   z.object({ type: z.literal('clip:new'), clip: ClipSchema }),
   /** A clip changed (pinned or unpinned). */
   z.object({ type: z.literal('clip:update'), clip: ClipSchema }),
@@ -178,3 +232,8 @@ export function detectSensitive(text: string): SensitiveKind | null {
   if (classes === 3 && !identifier) return 'password';
   return null;
 }
+
+export * from './e2e';
+export * from './snippets';
+export * from './tunnel';
+export * from './relay';

@@ -5,7 +5,7 @@ import { BASE_CSS, ICONS } from '@omniclip/ui';
 
 export interface PickerItem {
   id: string;
-  kind: 'text' | 'image' | 'file';
+  kind: 'text' | 'image' | 'file' | 'snippet';
   label: string;
   source: string;
   createdAt: number;
@@ -76,6 +76,7 @@ function ago(ts) {
   return new Date(ts).toLocaleDateString();
 }
 function kindIcon(it) {
+  if (it.kind === 'snippet') return 'zap';
   if (it.sensitive) return 'lock';
   if (it.kind === 'image') return 'image';
   if (it.kind === 'file') return it.folder ? 'folder' : 'file';
@@ -98,7 +99,7 @@ function render() {
     const av = el('span', 'avatar sm' + (it.sensitive ? ' warn' : ''));
     av.append(icon(kindIcon(it)));
     const body = el('div', 'body');
-    body.append(el('div', 'label' + (it.sensitive ? ' secret' : ''), it.label), el('div', 'meta', it.source + ' · ' + ago(it.createdAt)));
+    body.append(el('div', 'label' + (it.sensitive ? ' secret' : ''), it.label), el('div', 'meta', it.kind === 'snippet' ? it.source : it.source + ' · ' + ago(it.createdAt)));
     const end = el('div', 'end');
     if (it.pinned) end.append(icon('pin'));
     if (i < 9 && !input.value) end.append(el('kbd', 'num', String(i + 1)));

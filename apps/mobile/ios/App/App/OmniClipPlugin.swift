@@ -10,8 +10,12 @@ public class OmniClipPlugin: CAPPlugin, CAPBridgedPlugin {
     public let identifier = "OmniClipPlugin"
     public let jsName = "OmniClip"
     public let pluginMethods: [CAPPluginMethod] = [
-        CAPPluginMethod(name: "trustCa", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "trustCa", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "saveSession", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "take", returnType: CAPPluginReturnPromise),
     ]
+
+    private static let appGroup = "group.com.omniclip.app"
 
     private static var anchor: SecCertificate?
 
@@ -31,6 +35,43 @@ public class OmniClipPlugin: CAPPlugin, CAPBridgedPlugin {
         }
         OmniClipPlugin.anchor = cert
         call.resolve()
+    }
+
+    /// Shares the hub address, token, CA, keyring and device list with the share extension (App Group).
+    @objc func saveSession(_ call: CAPPluginCall) {
+        guard let defaults = UserDefaults(suiteName: OmniClipPlugin.appGroup) else {
+            call.reject("App Group unavailable")
+            return
+        }
+        if let session = call.getObject("session"), let data = try? JSONSerialization.data(withJSONObject: session) {
+            defaults.set(data, forKey: "session")
+        } else {
+            defaults.removeObject(forKey: "session")
+        }
+        call.resolve()
+    }
+
+    /// Items the share extension saved for later because the hub wasn't reachable. Each is returned once.
+    @objc func take(_ call: CAPPluginCall) {
+        var items: [[String: Any]] = []
+        let fm = FileManager.default
+        if let folder = fm.containerURL(forSecurityApplicationGroupIdentifier: OmniClipPlugin.appGroup)?.appendingPathComponent("Queue", isDirectory: true),
+           let names = try? fm.contentsOfDirectory(atPath: folder.path) {
+            for name in names.filter({ $0.hasSuffix(".json") }).sorted() {
+                let metaURL = folder.appendingPathComponent(name)
+                defer { try? fm.removeItem(at: metaURL) }
+                guard let data = try? Data(contentsOf: metaURL), let meta = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+                if meta["kind"] as? String == "text", let text = meta["text"] as? String {
+                    items.append(["kind": "text", "text": text])
+                } else if let file = meta["file"] as? String {
+                    let fileURL = folder.appendingPathComponent(file)
+                    defer { try? fm.removeItem(at: fileURL) }
+                    guard let body = try? Data(contentsOf: fileURL) else { continue }
+                    items.append(["kind": "file", "name": meta["name"] as? String ?? "file", "mime": meta["mime"] as? String ?? "application/octet-stream", "data": body.base64EncodedString()])
+                }
+            }
+        }
+        call.resolve(["items": items, "sendClipboard": false])
     }
 
     override public func handleWKWebViewURLAuthenticationChallenge(

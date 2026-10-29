@@ -4,8 +4,20 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
-import { parseServerMessage, type PairResponse, type ServerMessage } from '@omniclip/protocol';
-import { Hub } from '../src/hub.js';
+import {
+  E2E_HEADER,
+  decryptBlob,
+  decryptClip,
+  encryptBlob,
+  openJson,
+  parseServerMessage,
+  sealJson,
+  type Clip,
+  type Keyring,
+  type PairResponse,
+  type ServerMessage,
+} from '@omniclip/protocol';
+import { Hub, VIA_RELAY_HEADER } from '../src/hub.js';
 
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'omniclip-hub-'));
 const base = 20000 + Math.floor(Math.random() * 20000);
@@ -22,8 +34,8 @@ async function pair(name: string, platform = 'android'): Promise<PairResponse> {
   return (await res.json()) as PairResponse;
 }
 
-function connect(token: string): Promise<{ ws: WebSocket; next: (type: ServerMessage['type']) => Promise<ServerMessage> }> {
-  const ws = new WebSocket(`ws://127.0.0.1:${base + 1}/ws?token=${token}`);
+function connect(token: string, e2e = false): Promise<{ ws: WebSocket; next: (type: ServerMessage['type']) => Promise<ServerMessage> }> {
+  const ws = new WebSocket(`ws://127.0.0.1:${base + 1}/ws?token=${token}${e2e ? '&e2e=1' : ''}`);
   const queue: ServerMessage[] = [];
   const waiters: Array<() => void> = [];
   ws.on('message', (raw) => {
@@ -295,5 +307,112 @@ describe('raw uploads', () => {
     };
     expect(await upload('application/zip', 'Photos.zip')).toMatchObject({ kind: 'file', folder: true });
     expect((await upload('text/plain', 'notes.txt')).folder).toBeUndefined();
+  });
+});
+
+describe('end-to-end encryption', () => {
+  const e2eHeaders = (t: string) => ({ authorization: `Bearer ${t}`, [E2E_HEADER]: '1', 'content-type': 'application/json' });
+
+  it('hands out the keyring and a tunnel key when pairing', async () => {
+    const phone = await pair('Keyed phone');
+    expect(phone.keys?.keys[phone.keys.current]).toBeTruthy();
+    expect(phone.tunnelKey).toBeTruthy();
+    expect(phone.keys).toEqual(hub.store.keys);
+  });
+
+  it('relays encrypted text untouched to encrypting devices and decrypted to the others', async () => {
+    const a = await pair('E2E sender', 'mac');
+    const b = await pair('E2E reader', 'android');
+    const old = await pair('Old v0.7 phone', 'ios');
+    const keys = a.keys as Keyring;
+    const [ca, cb, co] = await Promise.all([connect(a.token, true), connect(b.token, true), connect(old.token)]);
+    const helloB = await cb.next('hello');
+    expect(helloB.type === 'hello' && helloB.keys?.current).toBe(keys.current);
+    const helloOld = await co.next('hello');
+    expect(helloOld.type === 'hello' && helloOld.keys).toBeUndefined();
+    await ca.next('hello');
+
+    const enc = await sealJson(keys, { text: 'only devices can read this', hash: 'h1' });
+    const res = await fetch(`${http}/api/clips`, { method: 'POST', headers: e2eHeaders(a.token), body: JSON.stringify({ enc, size: 26 }) });
+    expect(res.status).toBe(200);
+    const sent = (await res.json()) as Clip;
+    expect(sent.text).toBeUndefined();
+
+    const atB = await cb.next('clip:new');
+    expect(atB.type === 'clip:new' && atB.clip.enc).toEqual(enc);
+    expect(atB.type === 'clip:new' && (await decryptClip(atB.clip, keys)).text).toBe('only devices can read this');
+    const atOld = await co.next('clip:new');
+    expect(atOld.type === 'clip:new' && atOld.clip.text).toBe('only devices can read this');
+    expect(fs.readFileSync(path.join(dataDir, 'store.json'), 'utf8')).not.toContain('only devices can read this');
+    await close(ca, cb, co);
+  });
+
+  it('encrypts what plain clients send, so it is never stored readable', async () => {
+    const shortcut = await pair('Plain Shortcut', 'shortcut');
+    const res = await fetch(`${http}/api/clips`, { method: 'POST', headers: { authorization: `Bearer ${shortcut.token}`, 'content-type': 'text/plain' }, body: 'sent by a shortcut' });
+    const back = (await res.json()) as Clip;
+    expect(back.text).toBe('sent by a shortcut');
+    const stored = hub.store.clip(back.id)!;
+    expect(stored.text).toBeUndefined();
+    expect((await openJson<{ text: string }>(hub.store.keys, stored.enc!)).text).toBe('sent by a shortcut');
+    expect(fs.readFileSync(path.join(dataDir, 'store.json'), 'utf8')).not.toContain('sent by a shortcut');
+  });
+
+  it('stores encrypted files as uploaded and serves plain clients the decrypted file', async () => {
+    const mac = await pair('E2E files', 'mac');
+    const phone = await pair('Plain browser', 'web');
+    const keys = mac.keys as Keyring;
+    const form = new FormData();
+    form.append('kind', 'image');
+    form.append('size', '9');
+    form.append('enc', JSON.stringify(await sealJson(keys, { name: 'cat.png', mime: 'image/png', hash: 'x' })));
+    form.append('file', new Blob([await encryptBlob(keys, new TextEncoder().encode('CAT-IMAGE'))]), 'blob');
+    const clip = (await (await fetch(`${http}/api/clips`, { method: 'POST', headers: { authorization: `Bearer ${mac.token}`, [E2E_HEADER]: '1' }, body: form })).json()) as Clip;
+    expect(clip).toMatchObject({ kind: 'image', size: 9 });
+
+    const raw = new Uint8Array(await (await fetch(`${http}/api/clips/${clip.id}/blob`, { headers: { authorization: `Bearer ${mac.token}`, [E2E_HEADER]: '1' } })).arrayBuffer());
+    expect(new TextDecoder().decode(await decryptBlob(keys, raw))).toBe('CAT-IMAGE');
+    const plain = await fetch(`${http}/api/clips/${clip.id}/blob?token=${phone.token}`);
+    expect(plain.headers.get('content-type')).toBe('image/png');
+    expect(await plain.text()).toBe('CAT-IMAGE');
+  });
+
+  it('rotates the key when a device is removed and tells the others', async () => {
+    const stay = await pair('Staying Mac', 'mac');
+    const leave = await pair('Leaving phone');
+    const c = await connect(stay.token, true);
+    await c.next('hello');
+    const before = hub.store.keys.current;
+    expect(hub.revokeDevice(leave.deviceId)).toBe(true);
+    const msg = await c.next('keys');
+    expect(msg.type === 'keys' && msg.keys.current).not.toBe(before);
+    expect(msg.type === 'keys' && msg.keys.keys[before]).toBeTruthy(); // old history stays readable
+    await close(c);
+  });
+
+  it('serves only encrypting clients through the relay, and never pairs there', async () => {
+    const dev = await pair('Far away phone');
+    const viaRelay = { authorization: `Bearer ${dev.token}`, [VIA_RELAY_HEADER]: '1' };
+    expect((await fetch(`${http}/api/clips`, { headers: viaRelay })).status).toBe(403);
+    expect((await fetch(`${http}/api/clips`, { headers: { ...viaRelay, [E2E_HEADER]: '1' } })).status).toBe(200);
+    const pairRes = await fetch(`${http}/api/pair`, { method: 'POST', headers: { [VIA_RELAY_HEADER]: '1', 'content-type': 'application/json' }, body: '{}' });
+    expect(pairRes.status).toBe(403);
+  });
+
+  it('keeps snippets encrypted and decrypts them for plain clients', async () => {
+    const mac = await pair('Snippet Mac', 'mac');
+    const plain = await pair('Snippet browser', 'web');
+    const keys = mac.keys as Keyring;
+    const c = await connect(mac.token, true);
+    await c.next('hello');
+    const enc = await sealJson(keys, { name: 'Address', keyword: 'addr', text: '1 Infinite Loop' });
+    expect((await fetch(`${http}/api/snippets/addr-1`, { method: 'PUT', headers: e2eHeaders(mac.token), body: JSON.stringify({ enc }) })).status).toBe(200);
+    const update = await c.next('snippets');
+    expect(update.type === 'snippets' && update.snippets[0]?.enc).toEqual(enc);
+    const list = (await (await fetch(`${http}/api/snippets`, { headers: { authorization: `Bearer ${plain.token}` } })).json()) as { text?: string }[];
+    expect(list.map((x) => x.text)).toContain('1 Infinite Loop');
+    expect(fs.readFileSync(path.join(dataDir, 'store.json'), 'utf8')).not.toContain('Infinite Loop');
+    expect((await fetch(`${http}/api/snippets/addr-1`, { method: 'DELETE', headers: { authorization: `Bearer ${mac.token}` } })).status).toBe(200);
+    await close(c);
   });
 });

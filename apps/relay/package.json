@@ -1,0 +1,12 @@
+{
+  "name": "@omniclip/relay",
+  "version": "0.8.0",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "description": "Internet relay for OmniClip (Cloudflare Worker). It only forwards end-to-end encrypted frames.",
+  "scripts": {
+    "dev": "npx wrangler@4 dev",
+    "deploy": "npx wrangler@4 deploy"
+  }
+}

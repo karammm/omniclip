@@ -70,6 +70,19 @@ body.mac .page-head { -webkit-app-region: drag; }
 .clip .actions .pin.on svg.i { fill: currentColor; fill-opacity: 0.2; }
 .empty { padding: 30px 16px; }
 .toast[hidden] { display: none; }
+
+.modal-backdrop { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 24px; background: rgb(5 5 15 / 0.45); animation: fade 0.15s ease; -webkit-app-region: no-drag; }
+.modal { width: 100%; max-width: 520px; max-height: 100%; overflow-y: auto; padding: 20px; border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--shadow-3); display: flex; flex-direction: column; gap: 14px; animation: rise 0.22s var(--ease); -webkit-user-select: text; user-select: text; }
+.modal h2 { margin: 0; font-size: 17px; font-weight: 650; }
+.modal label { display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; font-weight: 500; color: var(--text-2); }
+.modal .pair { display: grid; grid-template-columns: 1fr 160px; gap: 12px; }
+.modal textarea.field { min-height: 150px; resize: vertical; font: 13.5px/1.5 var(--font); }
+.modal .row-end { display: flex; gap: 8px; align-items: center; }
+.modal .row-end .spacer { flex: 1; }
+.modal .hint { font-size: 12px; color: var(--muted); line-height: 1.45; }
+.modal .hint code { padding: 1px 5px; border-radius: 5px; background: var(--hover); }
+.kw { font-family: var(--mono); font-size: 11.5px; }
+.snippet .text { -webkit-line-clamp: 1; color: var(--muted); font-size: 12.5px; margin-top: 2px; }
 .toast.err svg.i { color: var(--bad); }
 `;
 
@@ -145,6 +158,7 @@ function renderSidebar() {
   const online = state.devices.filter((d) => d.online).length;
   $('#brand-status').replaceChildren(el('span', { class: state.paused ? 'dot warn' : state.connected ? 'dot on' : 'dot bad' }), state.paused ? 'Paused' : state.connected ? (state.isHub ? 'Hub' : 'Connected') : 'Not connected');
   $('#devices-count').textContent = state.devices.length ? online + '/' + state.devices.length : '';
+  $('#snippets-count').textContent = state.snippets.length || '';
   $('#version').textContent = 'OmniClip ' + state.version;
 }
 
@@ -194,6 +208,9 @@ function renderGeneral() {
       state.hotkeyError ? el('div', { class: 'hotkey-error' }, state.hotkeyError) : null,
       toggle('Paste right away', 'Otherwise the clip is only copied, ready for ' + state.pasteKey + '.' + (state.fileManager === 'Finder' ? ' Needs OmniClip allowed in System Settings → Privacy & Security → Accessibility.' : ''), 'autoPaste'),
     ),
+    title('Away from home'),
+    relayGroup(),
+    el('div', { class: 'note' }, 'A relay lets your devices keep syncing when they’re not on the same Wi-Fi. It only passes along encrypted data, so it can’t read your clips. You can run your own for free on Cloudflare; see “Internet relay” in the OmniClip README.'),
     title('Received files'),
     group(
       el('div', { class: 'item' },
@@ -215,6 +232,24 @@ function renderGeneral() {
           state.update ? (state.update.ready ? 'Restart to update' : 'Download update') : 'Check for updates'),
       ),
     ),
+  );
+}
+
+function relayGroup() {
+  const r = state.relay;
+  const input = el('input', { type: 'text', class: 'field', value: r.url, placeholder: 'omniclip-relay.yourname.workers.dev', disabled: !r.editable, spellcheck: 'false' });
+  const save = el('button', { class: 'btn', disabled: !r.editable, onclick: () => act(async () => { await api.setRelay(input.value); alertBar(input.value.trim() ? 'Relay saved' : 'Relay turned off'); }) }, 'Save');
+  input.addEventListener('keydown', (e) => e.key === 'Enter' && save.click());
+  const badge =
+    r.via === 'relay' ? el('span', { class: 'badge accent' }, icon('globe'), 'This computer is using the relay')
+    : r.status === 'online' ? el('span', { class: 'badge ok' }, icon('check'), 'Hub connected to the relay')
+    : r.status === 'connecting' ? el('span', { class: 'badge' }, 'Connecting…')
+    : r.status === 'error' ? el('span', { class: 'badge bad' }, r.detail || 'Can’t reach the relay')
+    : r.status === 'set' ? el('span', { class: 'badge ok' }, icon('check'), 'Ready for when you leave home')
+    : el('span', { class: 'badge' }, 'Off');
+  return group(
+    el('div', { class: 'item' }, avatar('globe', r.url ? '' : 'grey'), text('Internet relay', r.editable ? 'Set it here once; every device picks it up.' : 'Change it from a computer at home.'), badge),
+    el('div', { class: 'item' }, input, save),
   );
 }
 
@@ -303,6 +338,83 @@ function confirmRemove(d) {
   act(() => api.removeDevice(d.id));
 }
 
+// ---- dialogs
+function modal(heading, body, actions) {
+  const box = el('div', { class: 'modal', role: 'dialog', 'aria-label': heading }, el('h2', {}, heading), ...body, el('div', { class: 'row-end' }, ...actions));
+  const back = el('div', { class: 'modal-backdrop' }, box);
+  const close = () => { back.remove(); document.removeEventListener('keydown', onKey); };
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  back.addEventListener('mousedown', (e) => { if (e.target === back) close(); });
+  document.addEventListener('keydown', onKey);
+  document.body.append(back);
+  setTimeout(() => box.querySelector('textarea, input')?.focus(), 0);
+  return close;
+}
+const field = (label, input, hint) => el('label', {}, label, input, hint ? el('div', { class: 'hint' }, hint) : null);
+
+function editSnippet(sn, presetText) {
+  const name = el('input', { type: 'text', class: 'field', maxlength: '100', placeholder: 'e.g. Home address', value: sn?.name || '' });
+  const keyword = el('input', { type: 'text', class: 'field kw', maxlength: '40', placeholder: 'addr', value: sn?.keyword || '' });
+  const text = el('textarea', { class: 'field', placeholder: 'The text to paste', value: sn?.text ?? presetText ?? '' });
+  const save = () => act(async () => {
+    await api.saveSnippet(sn?.id ?? null, { name: name.value, keyword: keyword.value, text: text.value });
+    close();
+    alertBar(sn ? 'Snippet saved' : 'Snippet added');
+  });
+  text.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) save(); });
+  const close = modal(sn ? 'Edit snippet' : 'New snippet', [
+    el('div', { class: 'pair' }, field('Name', name), field('Keyword', keyword, 'Type ;' + 'keyword in the picker')),
+    field('Text', text),
+    el('div', { class: 'hint' }, 'Placeholders: ', el('code', {}, '{date}'), ' ', el('code', {}, '{time}'), ' ', el('code', {}, '{clipboard}'), ' (what you last copied).'),
+  ], [
+    sn ? el('button', { class: 'btn ghost danger', onclick: () => act(async () => { await api.deleteSnippet(sn.id); close(); alertBar('Snippet deleted'); }) }, icon('trash', 'sm'), 'Delete') : null,
+    el('span', { class: 'spacer' }),
+    el('button', { class: 'btn', onclick: () => close() }, 'Cancel'),
+    el('button', { class: 'btn primary', onclick: save }, 'Save'),
+  ]);
+}
+
+function editAndSend(original) {
+  const text = el('textarea', { class: 'field', value: original });
+  const target = el('select', { class: 'select' },
+    el('option', { value: '' }, 'All devices'),
+    ...state.devices.filter((d) => d.id !== state.deviceId).map((d) => el('option', { value: d.id }, d.name + (d.online ? '' : ' (offline)'))));
+  const send = () => act(async () => {
+    await api.sendText(text.value, target.value || undefined);
+    close();
+    alertBar(target.value ? 'Sent to ' + target.selectedOptions[0].textContent.replace(' (offline)', '') : 'Sent to all devices');
+  });
+  text.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) send(); });
+  const close = modal('Edit & send', [field('Text', text, 'Change it, then send it as a new clip. The original stays in History.')], [
+    el('button', { class: 'btn ghost', onclick: () => { close(); editSnippet(null, text.value); } }, icon('zap', 'sm'), 'Save as snippet'),
+    el('span', { class: 'spacer' }),
+    target,
+    el('button', { class: 'btn primary', onclick: send }, icon('send', 'sm'), 'Send'),
+  ]);
+}
+
+// ---- snippets
+function renderSnippets() {
+  const rows = state.snippets.map((sn) =>
+    el('div', { class: 'item snippet' },
+      avatar('zap'),
+      el('div', { class: 'grow' }, el('div', { class: 'label ellipsis' }, sn.name || sn.text.split('\\n')[0]), el('div', { class: 'text' }, sn.text.replace(/\\s+/g, ' '))),
+      sn.keyword ? el('span', { class: 'badge accent kw' }, ';' + sn.keyword) : null,
+      el('div', { class: 'end' },
+        el('button', { class: 'btn ghost icon sm', title: 'Edit', 'aria-label': 'Edit ' + (sn.name || 'snippet'), onclick: () => editSnippet(sn) }, icon('pencil', 'sm')),
+      ),
+    ),
+  );
+  fill('#snippets',
+    head('Snippets', 'Text you paste often, on every device. In the quick-paste picker (' + state.hotkeyLabel + '), type ; and a keyword.',
+      state.connected ? el('button', { class: 'btn primary', onclick: () => editSnippet(null) }, icon('plus', 'sm'), 'New snippet') : null),
+    rows.length ? group(...rows)
+      : el('div', { class: 'card empty' }, avatar('zap', 'lg'), el('div', { class: 'title' }, state.connected ? 'No snippets yet' : 'Not connected'),
+          el('div', { class: 'small' }, state.connected ? 'Save addresses, replies and links you paste again and again.' : 'Snippets appear once OmniClip finds your hub.')),
+    el('div', { class: 'note' }, 'Snippets are end-to-end encrypted like your clips, and show up on your phones too.'),
+  );
+}
+
 // ---- history
 function clipRow(c) {
   const isLink = c.kind === 'text' && /^https?:\\/\\/\\S+$/.test((c.text || '').trim());
@@ -317,6 +429,7 @@ function clipRow(c) {
     el('div', { class: 'grow' }, preview, el('div', { class: 'meta' }, from + to + ' · ' + ago(c.createdAt))),
     el('div', { class: 'actions' },
       el('button', { class: 'btn ghost icon sm', title: c.kind === 'file' ? 'Save' : 'Copy', 'aria-label': c.kind === 'file' ? 'Save' : 'Copy', onclick: () => act(async () => { await api.copy(c.id); alertBar(c.kind === 'file' ? 'Saved' : 'Copied'); }) }, icon(c.kind === 'file' ? 'download' : 'copy', 'sm')),
+      state.connected && c.kind === 'text' && !c.sensitive ? el('button', { class: 'btn ghost icon sm', title: 'Edit & send', 'aria-label': 'Edit & send', onclick: () => editAndSend(c.text || '') }, icon('pencil', 'sm')) : null,
       state.connected ? el('button', { class: 'btn ghost icon sm', title: 'Send to one device', 'aria-label': 'Send to one device', onclick: () => act(() => api.sendTo(c.id)) }, icon('send', 'sm')) : null,
       c.sensitive ? null : el('button', { class: 'btn ghost icon sm pin' + (c.pinned ? ' on' : ''), title: c.pinned ? 'Unpin' : 'Pin', 'aria-label': c.pinned ? 'Unpin' : 'Pin', onclick: () => act(async () => { await api.pin(c.id, !c.pinned); runSearch(); }) }, icon('pin', 'sm')),
     ),
@@ -351,6 +464,7 @@ async function refresh() {
   renderSidebar();
   renderGeneral();
   renderRules();
+  renderSnippets();
   renderDevices();
   if ($('#history').classList.contains('active')) runSearch();
 }
@@ -361,6 +475,7 @@ refresh().then(() => { if (location.hash === '#history') document.querySelector(
 const NAV: Array<[string, string, keyof typeof ICONS]> = [
   ['general', 'General', 'sliders'],
   ['rules', 'Rules', 'filter'],
+  ['snippets', 'Snippets', 'zap'],
   ['devices', 'Devices', 'devices'],
   ['history', 'History', 'clock'],
 ];
@@ -373,7 +488,7 @@ function svg(name: keyof typeof ICONS): string {
 export function renderSettingsPage(mac = false): string {
   const nav = NAV.map(
     ([id, label, icon], i) =>
-      `<button class="${i ? '' : 'active'}" data-tab="${id}">${svg(icon)}${label}${id === 'devices' ? '<span class="count" id="devices-count"></span>' : ''}</button>`,
+      `<button class="${i ? '' : 'active'}" data-tab="${id}">${svg(icon)}${label}${id === 'devices' || id === 'snippets' ? `<span class="count" id="${id}-count"></span>` : ''}</button>`,
   ).join('');
   return `<!doctype html><html><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
@@ -383,7 +498,7 @@ export function renderSettingsPage(mac = false): string {
   <nav>${nav}</nav>
   <div class="side-foot" id="version"></div>
 </aside>
-<main><section id="general" class="active"></section><section id="rules"></section><section id="devices"></section><section id="history"></section></main>
+<main><section id="general" class="active"></section><section id="rules"></section><section id="snippets"></section><section id="devices"></section><section id="history"></section></main>
 <div id="alert" class="toast" role="status" hidden></div>
 <script>const ICONS = ${JSON.stringify(ICONS)}; const ICON = ${JSON.stringify(PLATFORM_ICON)};${SCRIPT}</script></body></html>`;
 }
